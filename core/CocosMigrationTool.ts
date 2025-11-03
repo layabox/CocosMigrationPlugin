@@ -71,7 +71,7 @@ export class CocosMigrationTool implements ICocosMigrationTool {
             let tsconfig = await IEditorEnv.utils.readJsonAsync(fpath.join(cocosProjectRoot, "temp", "tsconfig.cocos.json"));
             if (tsconfig) {
                 internalAssetsFolder = tsconfig.compilerOptions.paths["db://internal/*"][0];
-                if (internalAssetsFolder.endsWith("/*"))
+                if (internalAssetsFolder.endsWith("/*") || internalAssetsFolder.endsWith("\\*"))
                     internalAssetsFolder = internalAssetsFolder.substring(0, internalAssetsFolder.length - 2);
             }
         }
