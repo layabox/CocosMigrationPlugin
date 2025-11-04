@@ -442,6 +442,10 @@ export class PrefabConversion implements ICocosAssetConversion {
                 break;
 
             case "cc.Widget": {
+                if (isOverride) {
+                    //暂时没办法支持cc.Widget的override，因为分不清是哪个
+                    break;
+                }
                 if (!node.relations)
                     node.relations = [];
                 let relation: any = { _$type: "Relation", data: [] };
@@ -455,24 +459,25 @@ export class PrefabConversion implements ICocosAssetConversion {
                     });
                 }
                 let alignFlags = data._alignFlags;
+                if (alignFlags != null) {
+                    if (alignFlags & 8 && alignFlags & 32)
+                        relation.data.push(1, 0);
+                    else if (alignFlags & 8) //left
+                        relation.data.push(3, 0);
+                    else if (alignFlags & 16) //center
+                        relation.data.push(6, 0);
+                    else if (alignFlags & 32) //right
+                        relation.data.push(7, 0);
 
-                if (alignFlags & 8 && alignFlags & 32)
-                    relation.data.push(1, 0);
-                else if (alignFlags & 8) //left
-                    relation.data.push(3, 0);
-                else if (alignFlags & 16) //center
-                    relation.data.push(6, 0);
-                else if (alignFlags & 32) //right
-                    relation.data.push(7, 0);
-
-                if (alignFlags & 1 && alignFlags & 4)
-                    relation.data.push(2, 0);
-                else if (alignFlags & 1) //top
-                    relation.data.push(10, 0);
-                else if (alignFlags & 2) //middle
-                    relation.data.push(13, 0);
-                else if (alignFlags & 4) //bottom
-                    relation.data.push(14, 0);
+                    if (alignFlags & 1 && alignFlags & 4)
+                        relation.data.push(2, 0);
+                    else if (alignFlags & 1) //top
+                        relation.data.push(10, 0);
+                    else if (alignFlags & 2) //middle
+                        relation.data.push(13, 0);
+                    else if (alignFlags & 4) //bottom
+                        relation.data.push(14, 0);
+                }
 
                 break;
             }
@@ -590,6 +595,9 @@ export class PrefabConversion implements ICocosAssetConversion {
             }
 
             case "cc.Mask": {
+                if (isOverride)
+                    break;
+
                 let spriteData = this.findComponent(data, "cc.Sprite");
                 let shape = data._type;
                 let maskNode: any = {
