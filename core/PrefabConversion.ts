@@ -69,6 +69,15 @@ export class PrefabConversion implements ICocosAssetConversion {
             }
         }
 
+        //有些节点不在children里，需要补充处理下
+        let i = 0;
+        for (let element of this.elements) {
+            if (element.__type__ == "cc.Node" && !this.nodeMap.has(i)) {
+                this.parseNode(element._parent ? this.nodeMap.get(element._parent.__id__) : null, i);
+            }
+            i++;
+        }
+
         this.nodeHooks.forEach(hook => hook());
 
         return node;
@@ -586,8 +595,9 @@ export class PrefabConversion implements ICocosAssetConversion {
                 node.leading = data._lineHeight - data._fontSize;
                 if (data.__type__ === "cc.RichText") {
                     node.html = true;
-                    node.text = data._string.replaceAll("<color=", "<font color=").replaceAll("</color>", "</font>")
-                        .replaceAll("<size=", "<font size=").replaceAll("</size>", "</font>");
+                    if (data._string != null)
+                        node.text = data._string.replaceAll("<color=", "<font color=").replaceAll("</color>", "</font>")
+                            .replaceAll("<size=", "<font size=").replaceAll("</size>", "</font>");
                 }
                 else
                     node.text = data._string;
