@@ -35,9 +35,11 @@ export class ModelConversion implements ICocosAssetConversion {
                 userData: { __layaId: meta.uuid + "@0" }
             });
 
-            let scenePath = `${this.owner.cocosProjectRoot}/library/${sceneAssetId.substring(0, 2)}/${sceneAssetId}.json`;
-            let elements = await IEditorEnv.utils.readJsonAsync(scenePath);
-            (this.owner.getAssetConversion("prefab") as PrefabConversion).parseElements(elements);
+            if (this.owner.cocosProjectRoot) {
+                let scenePath = `${this.owner.cocosProjectRoot}/library/${sceneAssetId.substring(0, 2)}/${sceneAssetId}.json`;
+                let elements = await IEditorEnv.utils.readJsonAsync(scenePath);
+                (this.owner.getAssetConversion("prefab") as PrefabConversion).parseElements(elements);
+            }
         }
 
         await fs.promises.copyFile(sourcePath, targetPath);
