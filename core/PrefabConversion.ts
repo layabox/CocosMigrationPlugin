@@ -900,7 +900,10 @@ export class PrefabConversion implements ICocosAssetConversion {
     }
 
     private findComponent(nodeOrAnyComp: any, compType: string): any {
-        let components = nodeOrAnyComp._components || this.elements[this.getComponentOwnerId(nodeOrAnyComp)]._components;
+        let components = nodeOrAnyComp._components || this.elements[this.getComponentOwnerId(nodeOrAnyComp)]?._components;
+        if (!components)
+            return null;
+
         for (let idInfo of components) {
             let comp = this.elements[idInfo.__id__];
             if (comp.__type__ === compType) {
