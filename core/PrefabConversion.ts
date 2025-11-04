@@ -188,6 +188,9 @@ export class PrefabConversion implements ICocosAssetConversion {
                 if (propertyOverrides?.length > 0) {
                     for (let idInfo of propertyOverrides) {
                         let info = elements[idInfo.__id__];
+                        if (!info.targetInfo)
+                            continue;
+
                         let targetId = elements[info.targetInfo.__id__].localID[0];
                         this.overrides.push({
                             targetId,
@@ -201,6 +204,9 @@ export class PrefabConversion implements ICocosAssetConversion {
                 if (prefabInst.mountedComponents?.length > 0) {
                     for (let idInfo of prefabInst.mountedComponents) {
                         let info = elements[idInfo.__id__];
+                        if (!info.targetInfo)
+                            continue;
+
                         let targetId = elements[info.targetInfo.__id__].localID[0];
                         this.overrides.push({
                             targetId,
@@ -214,6 +220,9 @@ export class PrefabConversion implements ICocosAssetConversion {
                 if (prefabInst.mountedChildren?.length > 0) {
                     for (let idInfo of prefabInst.mountedChildren) {
                         let info = elements[idInfo.__id__];
+                        if (!info.targetInfo)
+                            continue;
+
                         let targetId = elements[info.targetInfo.__id__].localID[0];
                         let mountedChild = this.parseNode(node, elements[info.nodes[0].__id__]);
                         this.overrides.push({
