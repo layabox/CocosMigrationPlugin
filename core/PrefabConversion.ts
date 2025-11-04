@@ -200,13 +200,16 @@ export class PrefabConversion implements ICocosAssetConversion {
                             continue;
 
                         let targetId = elements[info.targetInfo.__id__].localID[0];
-                        this.overrides.push({
-                            targetId,
-                            propertyPath: "_$comp",
-                            value: elements[info.components[0].__id__],
-                            instanceNode: node,
-                            instanceNodeParent: parentNode
-                        });
+                        for (let item of info.components) {
+                            if (item != null)
+                                this.overrides.push({
+                                    targetId,
+                                    propertyPath: "_$comp",
+                                    value: elements[item.__id__],
+                                    instanceNode: node,
+                                    instanceNodeParent: parentNode
+                                });
+                        }
                     }
                 }
                 if (prefabInst.mountedChildren?.length > 0) {
@@ -216,14 +219,18 @@ export class PrefabConversion implements ICocosAssetConversion {
                             continue;
 
                         let targetId = elements[info.targetInfo.__id__].localID[0];
-                        let mountedChild = this.parseNode(node, info.nodes[0].__id__);
-                        this.overrides.push({
-                            targetId,
-                            propertyPath: "_$child",
-                            value: mountedChild,
-                            instanceNode: node,
-                            instanceNodeParent: parentNode
-                        });
+                        for (let item of info.nodes) {
+                            if (item) {
+                                let mountedChild = this.parseNode(node, item.__id__);
+                                this.overrides.push({
+                                    targetId,
+                                    propertyPath: "_$child",
+                                    value: mountedChild,
+                                    instanceNode: node,
+                                    instanceNodeParent: parentNode
+                                });
+                            }
+                        }
                     }
                 }
 
