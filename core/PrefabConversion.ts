@@ -40,14 +40,9 @@ export class PrefabConversion implements ICocosAssetConversion {
         let ccAsset = elements[0];
         //ccAsset.name
 
-        let node: any;
-        let data = elements[1];
-        if (data.__type__ === "cc.Scene") {
-            node = this.parseNode(null, data);
-            node = Object.assign({
-                "_$ver": 1,
-                "name": "Scene2D"
-            }, node);
+        let node = this.parseNode(null, 1);
+        node = Object.assign({ "_$ver": 1 }, node);
+        if (node._$type === "Scene") {
             delete node.anchorY;
             let children: any[] = node._$child;
             if (children) {
@@ -73,12 +68,7 @@ export class PrefabConversion implements ICocosAssetConversion {
                     children.unshift(scene3dNode);
             }
         }
-        else {
-            node = this.parseNode(null, data);
-            node = Object.assign({ "_$ver": 1 }, node);
-        }
 
-        this.nodeMap.set(1, node);
         this.nodeHooks.forEach(hook => hook());
 
         return node;
@@ -175,9 +165,11 @@ export class PrefabConversion implements ICocosAssetConversion {
             return entry;
     }
 
-    private parseNode(parentNode: any, data: any): any {
+    private parseNode(parentNode: any, dataId: number): any {
         let node: any = { _$id: IEditorEnv.utils.genShortId() };
+        this.nodeMap.set(dataId, node);
         let elements = this.elements;
+        let data = elements[dataId];
 
         if (data._prefab) {
             let prefabInfo = elements[data._prefab.__id__];
@@ -224,7 +216,7 @@ export class PrefabConversion implements ICocosAssetConversion {
                             continue;
 
                         let targetId = elements[info.targetInfo.__id__].localID[0];
-                        let mountedChild = this.parseNode(node, elements[info.nodes[0].__id__]);
+                        let mountedChild = this.parseNode(node, info.nodes[0].__id__);
                         this.overrides.push({
                             targetId,
                             propertyPath: "_$child",
@@ -262,6 +254,7 @@ export class PrefabConversion implements ICocosAssetConversion {
         }
         else {
             node._$type = "Scene";
+            node.name = "Scene2D";
             //子节点需要这个计算坐标
             let ccResolution = this.owner.projectConfig.general.designResolution;
             node.width = ccResolution.width;
@@ -305,7 +298,7 @@ export class PrefabConversion implements ICocosAssetConversion {
                 if (this.removedElements.has(idInfo.__id__))
                     continue;
 
-                let childNode = this.parseNode(node, elements[idInfo.__id__]);
+                let childNode = this.parseNode(node, idInfo.__id__);
                 if (!childNode)
                     continue;
 
@@ -321,7 +314,6 @@ export class PrefabConversion implements ICocosAssetConversion {
                     }
                 }
 
-                this.nodeMap.set(idInfo.__id__, childNode);
                 node._$child.push(childNode);
             }
         }
@@ -725,8 +717,9 @@ export class PrefabConversion implements ICocosAssetConversion {
             case "cc.EditBox": {
                 node._$type = "GTextInput";
                 if (data._textLabel) {
-                    let textLabel = this.removeElement(data._textLabel);
-                    let textLabelNode = this.parseNode(node, textLabel);
+                    let labelNodeId = this.getNodeId(data._textLabel);
+                    this.removedElements.add(labelNodeId);
+                    let textLabelNode = this.parseNode(node, labelNodeId);
                     const textProps = ["color", "fontSize", "font", "align", "valign", "maxWidth", "leading", "html"];
                     for (let k in textProps) {
                         let prop = textProps[k];
@@ -735,8 +728,9 @@ export class PrefabConversion implements ICocosAssetConversion {
                     }
                 }
                 if (data._placeholderLabel) {
-                    let placeholderLabel = this.removeElement(data._placeholderLabel);
-                    let placeholderLabelNode = this.parseNode(node, placeholderLabel);
+                    let labelNodeId = this.getNodeId(data._placeholderLabel);
+                    this.removedElements.add(labelNodeId);
+                    let placeholderLabelNode = this.parseNode(node, labelNodeId);
                     if (placeholderLabelNode.color)
                         node.promptColor = placeholderLabelNode.color;
                     if (placeholderLabelNode.text)
@@ -885,16 +879,16 @@ export class PrefabConversion implements ICocosAssetConversion {
         }
     }
 
-    private getNodeId(idInfo: any): any {
+    private getNodeId(idInfo: any): number {
         let p = this.elements[idInfo.__id__];
         return p.node ? p.node.__id__ : idInfo.__id__;
     }
 
-    private getNodeParentId(data: any): any {
+    private getNodeParentId(data: any): number {
         return data._parent?.__id__ || data.__editorExtras__?.mountedRoot?.__id__;
     }
 
-    private getComponentOwnerId(data: any): any {
+    private getComponentOwnerId(data: any): number {
         return data.node?.__id__ || data.__editorExtras__?.mountedRoot?.__id__;
     }
 
@@ -909,13 +903,12 @@ export class PrefabConversion implements ICocosAssetConversion {
         return null;
     }
 
-    private removeElement(idInfo: any) {
+    private removeElement(idInfo: any): void {
         let id = typeof (idInfo) === "object" ? idInfo.__id__ : idInfo;
         let p = this.elements[id];
         if (p.node)
             id = p.node.__id__;
         this.removedElements.add(id);
-        return this.elements[id];
     }
 
     private moveContentNodes(node: any, data: any, contentIdInfo: any) {
@@ -928,7 +921,7 @@ export class PrefabConversion implements ICocosAssetConversion {
 
             p = p2;
         }
-        let viewNode = this.parseNode(node, this.elements[p]);
+        let viewNode = this.parseNode(node, p);
         this.removeElement(p);
         let contentNode = this.nodeMap.get(contentIdInfo.__id__);
 
