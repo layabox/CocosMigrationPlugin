@@ -1051,7 +1051,7 @@ export class PrefabConversion implements ICocosAssetConversion {
 
         let asset = this.owner.allAssets.get(uuid);
         if (!asset) {
-            console.log("missing spriteFrame asset: " + uuid);
+            console.warn("missing spriteFrame asset: " + uuid);
             return null;
         }
 
