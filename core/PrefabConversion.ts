@@ -674,24 +674,26 @@ export class PrefabConversion implements ICocosAssetConversion {
                     node.height = 30;
                 this.nodeHooks.push(() => {
                     let cnt = 0;
-                    node._$child.forEach((child: any) => {
-                        if (child._$type === "GButton" && child.mode === 1) {
-                            child.mode = 2;
-                            child.selectedController = {
-                                "_$ref": node._$id,
-                                "_$ctrl": "c1"
-                            };
-                            child.selectedPage = cnt;
-                            cnt++;
-                        }
-                    });
-                    node.controllers = {
-                        "_$type": "Record",
-                        "c1": {
-                            "_$type": "Controller",
-                            "pages": new Array(cnt).fill("")
-                        },
-                    };
+                    if (node._$child) {
+                        node._$child.forEach((child: any) => {
+                            if (child._$type === "GButton" && child.mode === 1) {
+                                child.mode = 2;
+                                child.selectedController = {
+                                    "_$ref": node._$id,
+                                    "_$ctrl": "c1"
+                                };
+                                child.selectedPage = cnt;
+                                cnt++;
+                            }
+                        });
+                        node.controllers = {
+                            "_$type": "Record",
+                            "c1": {
+                                "_$type": "Controller",
+                                "pages": new Array(cnt).fill("")
+                            },
+                        };
+                    }
                 });
                 break;
             }
