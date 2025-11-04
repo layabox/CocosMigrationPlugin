@@ -1050,6 +1050,11 @@ export class PrefabConversion implements ICocosAssetConversion {
             return res;
 
         let asset = this.owner.allAssets.get(uuid);
+        if (!asset) {
+            console.log("missing spriteFrame asset: " + uuid);
+            return null;
+        }
+
         let data = asset.userData;
         res = {
             uuid: uuid.split("@")[0],
