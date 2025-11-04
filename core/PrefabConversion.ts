@@ -17,6 +17,18 @@ export class PrefabConversion implements ICocosAssetConversion {
 
     async run(sourcePath: string, targetPath: string, meta: any) {
         let elements = await IEditorEnv.utils.readJsonAsync(sourcePath);
+        let node = this.parseElements(elements);
+
+        targetPath = Laya.Utils.replaceFileExtension(targetPath, node._$type == "Scene" ? "ls" : "lh");
+
+        if (this.overrides.length > 0)
+            this.rewriteTasks.set(targetPath, { data: node, overrides: this.overrides, elements, nodeMap: this.nodeMap });
+
+        await IEditorEnv.utils.writeJsonAsync(targetPath, node);
+        await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", { uuid: meta.uuid });
+    }
+
+    parseElements(elements: Array<any>): any {
         this.elements = elements;
 
         this.overrides = [];
@@ -31,8 +43,6 @@ export class PrefabConversion implements ICocosAssetConversion {
         let node: any;
         let data = elements[1];
         if (data.__type__ === "cc.Scene") {
-            targetPath = Laya.Utils.replaceFileExtension(targetPath, "ls");
-
             node = this.parseNode(null, data);
             node = Object.assign({
                 "_$ver": 1,
@@ -44,7 +54,7 @@ export class PrefabConversion implements ICocosAssetConversion {
                 let scene3dNode: any;
                 for (let i = 0, n = children.length; i < n; i++) {
                     let child = children[i];
-                    if (EditorEnv.typeRegistry.isDerivedOf(child._$type, "Sprite3D")) {
+                    if (!child._$type || EditorEnv.typeRegistry.isDerivedOf(child._$type, "Sprite3D")) {
                         if (!scene3dNode) {
                             scene3dNode = {
                                 "_$id": IEditorEnv.utils.genShortId(),
@@ -64,8 +74,6 @@ export class PrefabConversion implements ICocosAssetConversion {
             }
         }
         else {
-            targetPath = Laya.Utils.replaceFileExtension(targetPath, "lh");
-
             node = this.parseNode(null, data);
             node = Object.assign({ "_$ver": 1 }, node);
         }
@@ -73,11 +81,7 @@ export class PrefabConversion implements ICocosAssetConversion {
         this.nodeMap.set(1, node);
         this.nodeHooks.forEach(hook => hook());
 
-        if (this.overrides.length > 0)
-            this.rewriteTasks.set(targetPath, { data: node, overrides: this.overrides, elements, nodeMap: this.nodeMap });
-
-        await IEditorEnv.utils.writeJsonAsync(targetPath, node);
-        await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", { uuid: meta.uuid });
+        return node;
     }
 
     async complete() {
@@ -117,7 +121,7 @@ export class PrefabConversion implements ICocosAssetConversion {
                         let comp = props._$comp[0];
                         let entry = this.createOverrideEntry(instanceNode, targetId, comp._$type);
                         delete comp._$type;
-                        Object.assign(entry, comp);
+                        IEditorEnv.utils.mergeObjs(entry, comp, true);
 
                         if (info.propertyPath == "_$comp") {
                             entry._$type = entry._$override;
@@ -127,7 +131,7 @@ export class PrefabConversion implements ICocosAssetConversion {
                     if (!IEditorEnv.utils.isEmptyObj(props) && (props._$type == null || props._$type == targetNode._$type)) {
                         let entry = this.createOverrideEntry(instanceNode, targetId);
                         delete props._$type;
-                        Object.assign(entry, props);
+                        IEditorEnv.utils.mergeObjs(entry, props, true);
                     }
                 }
                 else {
@@ -135,7 +139,7 @@ export class PrefabConversion implements ICocosAssetConversion {
                     let is2d = EditorEnv.typeRegistry.isDerivedOf(targetNode._$type, "Sprite");
                     this.parseNodeProps(parentNode, props, info.propertyPath[0], info.value, is2d, true);
                     let entry = this.createOverrideEntry(instanceNode, targetId);
-                    Object.assign(entry, props);
+                    IEditorEnv.utils.mergeObjs(entry, props, true);
                 }
             }
 
@@ -179,7 +183,7 @@ export class PrefabConversion implements ICocosAssetConversion {
             let prefabInfo = elements[data._prefab.__id__];
             let prefabInst = prefabInfo.instance ? elements[prefabInfo.instance.__id__] : null;
             if (prefabInst) {
-                node._$prefab = prefabInfo.asset.__uuid__;
+                node._$prefab = prefabInfo.asset.__uuid__.split("@")[0];
                 let propertyOverrides: any[] = prefabInst.propertyOverrides;
                 if (propertyOverrides?.length > 0) {
                     for (let idInfo of propertyOverrides) {
@@ -248,6 +252,7 @@ export class PrefabConversion implements ICocosAssetConversion {
             }
         }
         else {
+            node._$type = "Scene";
             //子节点需要这个计算坐标
             let ccResolution = this.owner.projectConfig.general.designResolution;
             node.width = ccResolution.width;

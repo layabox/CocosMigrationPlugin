@@ -5,12 +5,19 @@ export interface ICocosMigrationTool {
     readonly projectConfig: any;
 
     /**
+     * Cocos项目根目录
+     */
+    readonly cocosProjectRoot: string;
+
+    /**
      * 所有资源的信息
      */
     readonly allAssets: Map<string, {
         sourcePath: string,
         userData: any
     }>;
+
+    getAssetConversion(ext: string): ICocosAssetConversion | null;
 }
 
 export interface ICocosAssetConversion {

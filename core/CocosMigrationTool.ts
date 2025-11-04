@@ -7,6 +7,7 @@ const ConversionPiority = Symbol("ConversionPriority");
 
 export class CocosMigrationTool implements ICocosMigrationTool {
     projectConfig: any;
+    cocosProjectRoot: string;
     allAssets: Map<string, { sourcePath: string, userData: any }>;
 
     private _insts: Map<any, any> = new Map();
@@ -50,6 +51,7 @@ export class CocosMigrationTool implements ICocosMigrationTool {
                 break;
             }
         }
+        this.cocosProjectRoot = cocosProjectRoot;
 
         let projectConfig = options.cocosProjectConfig;
         if (!projectConfig && cocosProjectRoot)
@@ -96,9 +98,6 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         });
 
         for (let { sourcePath, targetPath, conv, meta } of this._items) {
-            if (!targetPath)
-                continue;
-
             if (conv)
                 await conv.run(sourcePath, targetPath, meta);
             else if (this._copyUnknownAssets) {
@@ -123,7 +122,8 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         }
     }
 
-    private getAssetConversion(ext: string): ICocosAssetConversion | null {
+    getAssetConversion(ext: string): ICocosAssetConversion | null {
+        ext = ext.toLowerCase();
         let cls = this._registry.get(ext);
         if (cls === undefined) {
             let i = ConversionRegistry.findIndex(info => info.exts.includes(ext));
