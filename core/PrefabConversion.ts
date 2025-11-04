@@ -442,7 +442,8 @@ export class PrefabConversion implements ICocosAssetConversion {
                 if (targetId) {
                     this.nodeHooks.push(() => {
                         let targetNode = this.nodeMap.get(targetId);
-                        relation.target = { _$ref: targetNode._$id };
+                        if (targetNode)
+                            relation.target = { _$ref: targetNode._$id };
                     });
                 }
                 let alignFlags = data._alignFlags;
