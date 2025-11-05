@@ -39,10 +39,10 @@ export class ImageConversion implements ICocosAssetConversion {
             }
             else if (subMeta.importer == "texture") {
                 importerData.generateMipmap = userData.mipfilter !== "none";
-                if (userData.wrapModeS == "mirrored-repeat")
-                    importerData.wrapMode = 2;
-                else if (userData.wrapModeS == "clamp-to-edge")
-                    importerData.wrapMode = 1;
+                // if (userData.wrapModeS == "mirrored-repeat")
+                //     importerData.wrapMode = 2;
+                // else if (userData.wrapModeS == "clamp-to-edge")
+                //     importerData.wrapMode = 1;
                 if (userData.minfilter == "nearest")
                     importerData.filterMode = 0;
                 else
