@@ -5,6 +5,6 @@ export class CocosImportMain {
 
     static async doImport(sourceFolder: string, targetFolder: string) {
         let importer = new CocosMigrationTool();
-        await importer.run({ sourceFolder, targetFolder });
+        await importer.run([{ sourceFolder, targetFolder }]);
     }
 }

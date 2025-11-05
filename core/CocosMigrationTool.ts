@@ -21,9 +21,10 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         meta: any
     }>;
 
-    async run(options: {
+    async run(tasks: ReadonlyArray<{
         sourceFolder: string,
-        targetFolder: string,
+        targetFolder?: string,
+    }>, options?: {
         cocosInternalAssetsFolder?: string,
         cocosProjectConfig?: any,
         copyUnknownAssets?: boolean
@@ -33,11 +34,11 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         this._registry = new Map();
         this._folders = new Set();
 
-        let sourceFolder = options.sourceFolder;
-        let targetFolder = options.targetFolder;
-        this._copyUnknownAssets = options.copyUnknownAssets;
+        options = options || {};
 
-        let cocosProjectRoot = sourceFolder;
+        this._copyUnknownAssets = !!options.copyUnknownAssets;
+
+        let cocosProjectRoot = tasks[0].sourceFolder;
         //读取cocos的配置文件
         while (true) {
             let testPath = fpath.join(cocosProjectRoot, "settings", "v2");
@@ -78,12 +79,19 @@ export class CocosMigrationTool implements ICocosMigrationTool {
             }
         }
 
-        let internalOutputFolder: string;
-        if (internalAssetsFolder && internalAssetsFolder != sourceFolder) {
-            internalOutputFolder = IEditorEnv.utils.mkTempDir();
-            await this.readDir(internalAssetsFolder, internalOutputFolder, "");
+        if (internalAssetsFolder && tasks.findIndex(t => t.sourceFolder == internalAssetsFolder) === -1) {
+            tasks = tasks.concat({ sourceFolder: internalAssetsFolder });
         }
-        await this.readDir(sourceFolder, targetFolder, "");
+
+        let tmpFolders: Array<string> = [];
+        for (let task of tasks) {
+            let targetFolder = task.targetFolder;
+            if (!targetFolder) {
+                targetFolder = IEditorEnv.utils.mkTempDir();
+                tmpFolders.push(targetFolder);
+            }
+            await this.readDir(task.sourceFolder, targetFolder, "");
+        }
 
         for (let folder of this._folders) {
             if (!fs.existsSync(folder)) {
@@ -117,8 +125,8 @@ export class CocosMigrationTool implements ICocosMigrationTool {
                 await inst.complete();
         }
 
-        if (internalOutputFolder) {
-            await fs.promises.rm(internalOutputFolder, { recursive: true, force: true });
+        for (let folder of tmpFolders) {
+            await fs.promises.rm(folder, { recursive: true, force: true });
         }
     }
 
