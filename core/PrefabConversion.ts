@@ -781,7 +781,7 @@ export class PrefabConversion implements ICocosAssetConversion {
 
             case "cc.Layout": {
                 node._$type = "GBox";
-                node.layout = {};
+                node.layout = { foldInvisibles: true };
                 if (data._layoutType === 1) { //单行
                     node.layout.type = 2;
                     if (!data._isAlign)
@@ -1005,6 +1005,9 @@ export class PrefabConversion implements ICocosAssetConversion {
                 ]
             }
         ];
+        if (!data._interactable)
+            node._mouseState = 1;
+
         let loader = node._$child[0];
         let sprite = this.findComponent(data, "cc.Sprite");
         if (sprite && sprite._spriteFrame) {
@@ -1012,6 +1015,8 @@ export class PrefabConversion implements ICocosAssetConversion {
             if (spf)
                 loader.src = "res://" + spf.uuid;
         }
+        if (data._color)
+            loader.color = colorToHexString(data._color);
 
         if (data._transition === 0) { //none
         }
@@ -1070,9 +1075,6 @@ export class PrefabConversion implements ICocosAssetConversion {
                 node.downEffect = 3;
             }
         }
-
-        if (!data._interactable)
-            node._mouseState = 1;
     }
 
     private _spriteFrameCache: Map<string, any> = new Map();
