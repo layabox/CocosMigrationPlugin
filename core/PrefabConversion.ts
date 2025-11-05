@@ -1010,13 +1010,15 @@ export class PrefabConversion implements ICocosAssetConversion {
 
         let loader = node._$child[0];
         let sprite = this.findComponent(data, "cc.Sprite");
-        if (sprite && sprite._spriteFrame) {
-            let spf = this.getSpriteFrame(sprite._spriteFrame.__uuid__);
-            if (spf)
-                loader.src = "res://" + spf.uuid;
+        if (sprite) {
+            if (sprite._spriteFrame) {
+                let spf = this.getSpriteFrame(sprite._spriteFrame.__uuid__);
+                if (spf)
+                    loader.src = "res://" + spf.uuid;
+            }
+            if (sprite._color)
+                loader.color = colorToHexString(sprite._color);
         }
-        if (data._color)
-            loader.color = colorToHexString(data._color);
 
         if (data._transition === 0) { //none
         }
