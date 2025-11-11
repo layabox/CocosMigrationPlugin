@@ -1,6 +1,9 @@
 import { ICocosAssetConversion, ICocosMigrationTool } from "./ICocosMigrationTool";
+import { getComponentParser, registerComponentParser as registerExternalComponentParser } from "./ComponentParserRegistry";
 
 export class PrefabConversion implements ICocosAssetConversion {
+    /** 允许外部模块注册额外的组件解析器。 */
+    static registerComponentParser = registerExternalComponentParser;
 
     private overrideTargets = new Map<string, any>();
     private rewriteTasks = new Map<string, any>();
@@ -413,7 +416,22 @@ export class PrefabConversion implements ICocosAssetConversion {
     }
 
     private parseComponent(node: any, data: any, isOverride?: boolean): void {
-        switch (data.__type__) {
+        if (!data || !data.__type__)
+            return;
+
+        const type = data.__type__;
+        const externalParser = getComponentParser(type);
+        if (externalParser) {
+            const result = externalParser({
+                conversion: this,
+                node,
+                data,
+                isOverride: !!isOverride
+            });
+            if (result !== false)
+                return;
+        }
+        switch (type) {
             case "cc.UITransform": {
                 let contentSize = data._contentSize;
                 if (contentSize) {
@@ -885,18 +903,18 @@ export class PrefabConversion implements ICocosAssetConversion {
             case "cc.Graphics":
                 break;
 
-            case "cc.Camera": {
-                node._$type = "Camera";
-                node.clearColor = colorToLayaColor(data._color);
-                break;
-            }
+            // case "cc.Camera": {
+            //     node._$type = "Camera";
+            //     node.clearColor = colorToLayaColor(data._color);
+            //     break;
+            // }
 
-            case "cc.DirectionalLight": {
-                let comp: any = { _$type: "DirectionLightCom" };
-                comp.color = colorToLayaColor(data._color);
-                node._$comp.push(comp);
-                break;
-            }
+            // case "cc.DirectionalLight": {
+            //     let comp: any = { _$type: "DirectionLightCom" };
+            //     comp.color = colorToLayaColor(data._color);
+            //     node._$comp.push(comp);
+            //     break;
+            // }
 
             default:
                 console.warn(`ignoring component: ${data.__type__}`);
@@ -1111,7 +1129,7 @@ function colorToHexString(color: any, hasAlpha?: boolean): string {
         return new Laya.Color(color.r / 255, color.g / 255, color.b / 255).toString();
 }
 
-function colorToLayaColor(color: any): any {
+export function colorToLayaColor(color: any): any {
     return {
         _$type: "Color",
         r: color.r / 255,

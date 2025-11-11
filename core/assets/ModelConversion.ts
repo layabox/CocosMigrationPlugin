@@ -1,6 +1,6 @@
-import { ICocosAssetConversion, ICocosMigrationTool } from "./ICocosMigrationTool";
+import { ICocosAssetConversion, ICocosMigrationTool } from "../ICocosMigrationTool";
 import * as fs from "fs";
-import { PrefabConversion } from "./PrefabConversion";
+import { PrefabConversion } from "../PrefabConversion";
 
 export class ModelConversion implements ICocosAssetConversion {
     constructor(private owner: ICocosMigrationTool) { }
@@ -15,6 +15,14 @@ export class ModelConversion implements ICocosAssetConversion {
             let i = 0;
             for (let uuid of subAssets[catalog]) {
                 let subId = uuid.split("@")[1];
+                if (!subId) {
+                    console.warn(`Invalid sub-asset uuid format: ${uuid}, missing "@" separator`);
+                    continue;
+                }
+                if (!meta.subMetas || !meta.subMetas[subId]) {
+                    console.warn(`Sub-asset metadata not found for subId: ${subId} in uuid: ${uuid}`);
+                    continue;
+                }
                 let newSubId = layaType + i++;
                 this.owner.allAssets.set(uuid, {
                     sourcePath,

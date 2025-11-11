@@ -1,5 +1,5 @@
 import fs from "fs";
-import { ICocosAssetConversion } from "./ICocosMigrationTool";
+import { ICocosAssetConversion } from "../ICocosMigrationTool";
 
 export class ImageConversion implements ICocosAssetConversion {
 

@@ -1,7 +1,8 @@
-import { ModelConversion } from "./ModelConversion";
+import { ModelConversion } from "./assets/ModelConversion";
 import { ICocosAssetConversion, ICocosMigrationTool } from "./ICocosMigrationTool";
-import { ImageConversion } from "./ImageConversion";
+import { ImageConversion } from "./assets/ImageConversion";
 import { PrefabConversion } from "./PrefabConversion"
+import { MaterialConversion } from "./assets/MaterialConversion";
 
 
 /**
@@ -21,5 +22,9 @@ export var ConversionRegistry: Array<{ exts: Array<string>, type: new (owner: IC
     {
         exts: ["prefab", "scene"],
         type: PrefabConversion
+    },
+    {
+        exts: ["mtl"],
+        type: MaterialConversion
     },
 ];
