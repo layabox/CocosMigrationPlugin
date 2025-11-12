@@ -80,7 +80,8 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         }
 
         if (internalAssetsFolder && tasks.findIndex(t => t.sourceFolder == internalAssetsFolder) === -1) {
-            tasks = tasks.concat({ sourceFolder: internalAssetsFolder });
+            console.warn("临时去掉内部资源迁移");
+            //tasks = tasks.concat({ sourceFolder: internalAssetsFolder });
         }
 
         let tmpFolders: Array<string> = [];

@@ -1,6 +1,8 @@
 import { registerComponentParser } from "../ComponentParserRegistry";
+import { ICocosMigrationTool } from "../ICocosMigrationTool";
+import { formatUuid } from "../Utils";
 
-registerComponentParser("cc.MeshRenderer", ({ conversion, node, data }) => {
+registerComponentParser("cc.MeshRenderer", ({ conversion, owner, node, data }) => {
     if (!Array.isArray(node._$comp))
         node._$comp = [];
 
@@ -15,7 +17,7 @@ registerComponentParser("cc.MeshRenderer", ({ conversion, node, data }) => {
 
     const meshUuid: string | undefined = data._mesh?.__uuid__;
     if (meshUuid) {
-        const resolved = formatUuid(meshUuid);
+        const resolved = formatUuid(meshUuid, owner);
         const meshFilter = ensureComp("MeshFilter");
         meshFilter.sharedMesh = {
             "_$uuid": resolved,
@@ -30,7 +32,7 @@ registerComponentParser("cc.MeshRenderer", ({ conversion, node, data }) => {
         meshRenderer.sharedMaterials = materials.map((item: any) => {
             const uuid = item?.__uuid__;
             return uuid ? {
-                "_$uuid": formatUuid(uuid),
+                "_$uuid": formatUuid(uuid, owner),
                 "_$type": "Material"
             } : null;
         }).filter(Boolean);
@@ -42,7 +44,3 @@ registerComponentParser("cc.MeshRenderer", ({ conversion, node, data }) => {
         };
     }
 });
-
-function formatUuid(uuid: string): string {
-    return uuid;
-}

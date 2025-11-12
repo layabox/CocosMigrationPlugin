@@ -1,5 +1,6 @@
 import { registerComponentParser } from "../ComponentParserRegistry";
 import { colorToLayaColor } from "../PrefabConversion";
+import { formatUuid } from "../Utils";
 
 registerComponentParser("cc.Camera", ({ owner, node, data }) => {
     if (!data)
@@ -67,7 +68,7 @@ registerComponentParser("cc.Camera", ({ owner, node, data }) => {
     const targetTexture = data._targetTexture;
     if (targetTexture?.__uuid__) {
         node.renderTarget = {
-            "_$uuid": formatUuid(targetTexture.__uuid__),
+            "_$uuid": formatUuid(targetTexture.__uuid__, owner),
             "_$type": "RenderTexture"
         };
     }
@@ -76,15 +77,12 @@ registerComponentParser("cc.Camera", ({ owner, node, data }) => {
     const postProcess = data._postProcess;
     if (usePostProcess && postProcess?.__uuid__) {
         node.postProcess = {
-            "_$uuid": formatUuid(postProcess.__uuid__),
+            "_$uuid": formatUuid(postProcess.__uuid__, owner),
             "_$type": "PostProcess"
         };
     }
 });
 
-function formatUuid(uuid: string): string {
-    return uuid;
-}
 function mapClearFlag(flags: number): number {
     const SKYBOX = 0x8;
     const COLOR = 0x1;

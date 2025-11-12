@@ -1,5 +1,6 @@
 import fs from "fs";
 import { ICocosAssetConversion, ICocosMigrationTool } from "../ICocosMigrationTool";
+import { formatUuid } from "../Utils";
 
 export class MaterialConversion implements ICocosAssetConversion {
     constructor(private owner: ICocosMigrationTool) { }
@@ -8,19 +9,19 @@ export class MaterialConversion implements ICocosAssetConversion {
         try {
             // 读取 Cocos 材质文件
             const cocosMatData = await IEditorEnv.utils.readJsonAsync(sourcePath);
-            
+
             // 转换为 LayaAir 材质格式
             const layaMaterial = this.convertMaterial(cocosMatData, meta);
-            
+
             // 修改目标路径扩展名为 .lmat
             targetPath = targetPath.replace(/\.mtl$/, '.lmat');
-            
+
             // 写入 LayaAir 材质文件
             await IEditorEnv.utils.writeJsonAsync(targetPath, layaMaterial);
-            
+
             // 写入 meta 文件
             await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", { uuid: meta.uuid });
-            
+
             console.log(`Material converted: ${sourcePath} -> ${targetPath}`);
         } catch (error) {
             console.error(`Failed to convert material ${sourcePath}:`, error);
@@ -100,7 +101,7 @@ export class MaterialConversion implements ICocosAssetConversion {
     private resolveShaderInfo(cocoEffectUuid: string, cocosMatData: any, defines: any): { type: string, source?: string } {
         // 获取 effect 资源信息
         const effectAsset = this.owner.allAssets.get(cocoEffectUuid);
-        
+
         // 根据 Cocos effect 名称映射到 LayaAir shader
         // 常见的内置材质映射
         const builtinShaderMap: Record<string, string> = {
@@ -188,7 +189,7 @@ export class MaterialConversion implements ICocosAssetConversion {
                 props.s_Blend = 1;
                 renderState.srcBlend = this.mapBlendFactor(blendTarget.blendSrc);
                 renderState.dstBlend = this.mapBlendFactor(blendTarget.blendDst);
-                
+
                 if (blendTarget.blendSrcAlpha !== undefined) {
                     renderState.srcBlendAlpha = this.mapBlendFactor(blendTarget.blendSrcAlpha);
                     renderState.dstBlendAlpha = this.mapBlendFactor(blendTarget.blendDstAlpha);
@@ -446,7 +447,7 @@ export class MaterialConversion implements ICocosAssetConversion {
             return uuid;
 
         const normalized = stripAt(uuid);
-        const formatted = formatUuid(normalized);
+        const formatted = formatUuid(normalized, this.owner);
         if (formatted !== normalized)
             return formatted;
 
@@ -454,7 +455,7 @@ export class MaterialConversion implements ICocosAssetConversion {
         const userData = assetInfo?.userData;
         const candidate = resolveUserDataUuid(userData);
         if (candidate)
-            return stripAt(formatUuid(candidate));
+            return stripAt(formatUuid(candidate, this.owner));
 
         return normalized;
     }
@@ -478,14 +479,15 @@ export class MaterialConversion implements ICocosAssetConversion {
     }
 
     private toLayaTypeName(name: string): string {
-        const parts = name.replace(/\\/g, "/").split(/[\/\-_]+/).filter(Boolean);
-        if (parts.length === 0)
-            return "CustomMaterial";
-        return parts.map((part, index) => {
-            if (index === 0 && part.length > 1 && part === part.toUpperCase())
-                return part;
-            return part.charAt(0).toUpperCase() + part.slice(1);
-        }).join("");
+        return name;
+        // const parts = name.replace(/\\/g, "/").split(/[\/\-_]+/).filter(Boolean);
+        // if (parts.length === 0)
+        //     return "CustomMaterial";
+        // return parts.map((part, index) => {
+        //     if (index === 0 && part.length > 1 && part === part.toUpperCase())
+        //         return part;
+        //     return part.charAt(0).toUpperCase() + part.slice(1);
+        // }).join("");
     }
 
     private toUniformName(name: string): string {
@@ -543,9 +545,6 @@ export class MaterialConversion implements ICocosAssetConversion {
     }
 }
 
-function formatUuid(uuid: string): string {
-    return uuid;
-}
 
 function stripAt(uuid: string): string {
     const at = uuid.indexOf("@");
