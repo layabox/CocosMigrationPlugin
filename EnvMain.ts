@@ -1,7 +1,8 @@
 import { CocosMigrationTool } from "./core/CocosMigrationTool";
-import "./core/components/ConvertMeshRenderer";
-import "./core/components/ConvertDirectionLight";
-import "./core/components/ConvertCamera";
+import "./core/components/MeshRendererConversion";
+import "./core/components/DirectionLightConversion";
+import "./core/components/CameraConversion";
+import "./core/components/SkinnedMeshRendererConversion";
 
 @IEditorEnv.regClass()
 export class CocosImportMain {

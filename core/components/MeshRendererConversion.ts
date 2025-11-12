@@ -1,8 +1,7 @@
 import { registerComponentParser } from "../ComponentParserRegistry";
-import { ICocosMigrationTool } from "../ICocosMigrationTool";
 import { formatUuid } from "../Utils";
 
-registerComponentParser("cc.MeshRenderer", ({ conversion, owner, node, data }) => {
+registerComponentParser("cc.MeshRenderer", ({ owner, node, data }) => {
     if (!Array.isArray(node._$comp))
         node._$comp = [];
 
@@ -44,3 +43,4 @@ registerComponentParser("cc.MeshRenderer", ({ conversion, owner, node, data }) =
         };
     }
 });
+

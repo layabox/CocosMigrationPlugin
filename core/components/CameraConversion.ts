@@ -120,3 +120,4 @@ function clampRange(value: number, min: number, max: number): number {
 function hasOwn(target: any, key: string): boolean {
     return target != null && Object.prototype.hasOwnProperty.call(target, key);
 }
+
