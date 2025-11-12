@@ -424,6 +424,7 @@ export class PrefabConversion implements ICocosAssetConversion {
         if (externalParser) {
             const result = externalParser({
                 conversion: this,
+                owner: this.owner,
                 node,
                 data,
                 isOverride: !!isOverride

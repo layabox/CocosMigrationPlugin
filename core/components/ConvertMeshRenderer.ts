@@ -1,5 +1,4 @@
 import { registerComponentParser } from "../ComponentParserRegistry";
-import { formatUuid } from "../uuid/UuidMap";
 
 registerComponentParser("cc.MeshRenderer", ({ conversion, node, data }) => {
     if (!Array.isArray(node._$comp))
@@ -44,3 +43,6 @@ registerComponentParser("cc.MeshRenderer", ({ conversion, node, data }) => {
     }
 });
 
+function formatUuid(uuid: string): string {
+    return uuid;
+}

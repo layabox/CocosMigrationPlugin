@@ -1,10 +1,11 @@
-export interface ComponentParserContext {
-    /**
-     * 当前的 Prefab 转换实例。
-     * 由于避免循环引用，这里使用 any 类型，调用方可自行断言。
-     */
-    conversion: any;
+import { ICocosAssetConversion, ICocosMigrationTool } from "./ICocosMigrationTool";
+import { PrefabConversion } from "./PrefabConversion";
 
+export interface ComponentParserContext {
+    /** 当前处理该组件的转换器实例。 */
+    conversion: ICocosAssetConversion;
+    /** 当前处理该组件的转换器实例。 */
+    owner: ICocosMigrationTool;
     /** 正在处理的目标节点（Laya 结构）。 */
     node: any;
 

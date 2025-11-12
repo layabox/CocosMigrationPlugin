@@ -1,6 +1,5 @@
 import fs from "fs";
 import { ICocosAssetConversion, ICocosMigrationTool } from "../ICocosMigrationTool";
-import { formatUuid } from "../uuid/UuidMap";
 
 export class MaterialConversion implements ICocosAssetConversion {
     constructor(private owner: ICocosMigrationTool) { }
@@ -542,6 +541,10 @@ export class MaterialConversion implements ICocosAssetConversion {
         }
         return components.map(v => v ?? 0);
     }
+}
+
+function formatUuid(uuid: string): string {
+    return uuid;
 }
 
 function stripAt(uuid: string): string {

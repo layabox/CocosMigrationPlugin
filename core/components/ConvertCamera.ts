@@ -1,8 +1,7 @@
 import { registerComponentParser } from "../ComponentParserRegistry";
 import { colorToLayaColor } from "../PrefabConversion";
-import { formatUuid } from "../uuid/UuidMap";
 
-registerComponentParser("cc.Camera", ({ node, data }) => {
+registerComponentParser("cc.Camera", ({ owner, node, data }) => {
     if (!data)
         return;
 
@@ -83,6 +82,9 @@ registerComponentParser("cc.Camera", ({ node, data }) => {
     }
 });
 
+function formatUuid(uuid: string): string {
+    return uuid;
+}
 function mapClearFlag(flags: number): number {
     const SKYBOX = 0x8;
     const COLOR = 0x1;
