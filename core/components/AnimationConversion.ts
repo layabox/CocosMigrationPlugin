@@ -2,6 +2,7 @@ import { registerComponentParser } from "../ComponentParserRegistry";
 import { formatUuid } from "../Utils";
 
 registerComponentParser("cc.Animation", ({ owner, node, data }) => {
+    return;//暂时不转换
     if (!data)
         return;
 
@@ -162,7 +163,7 @@ registerComponentParser("cc.animation.AnimationController", ({ owner, node, data
         // 需要将 animgraph UUID 转换为对应的 controller UUID
         const animgraphUuid = graphRef.__uuid__;
         const controllerUuid = formatUuid(animgraphUuid, owner);
-        
+
         // 在 Laya 中，controller 引用应该指向转换后的 .controller 文件
         // 由于 animgraph 已经转换为 .controller，直接使用转换后的 UUID
         comp.controller = {

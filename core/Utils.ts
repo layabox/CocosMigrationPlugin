@@ -1,5 +1,8 @@
 import { ICocosMigrationTool } from "./ICocosMigrationTool";
 import fpath from "path";
+const internalUUIDMap: Record<string, string> = {
+
+};
 
 export function formatUuid(uuid: string, owner: ICocosMigrationTool): string {
     const asset = owner.allAssets.get(uuid);
