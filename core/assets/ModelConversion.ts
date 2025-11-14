@@ -24,9 +24,10 @@ export class ModelConversion implements ICocosAssetConversion {
                     continue;
                 }
                 let newSubId = layaType + i++;
+                let subName = meta.subMetas[subId].name.split(".")[0] + "." + layaType;
                 this.owner.allAssets.set(uuid, {
                     sourcePath,
-                    userData: Object.assign(meta.subMetas[subId].userData, { __layaId: meta.uuid + "@" + newSubId })
+                    userData: Object.assign(meta.subMetas[subId].userData, { __layaId: meta.uuid + "@" + newSubId, __layaSubName: subName })
                 });
             }
         };

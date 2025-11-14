@@ -1,4 +1,5 @@
 import fs from "fs";
+import path from "path";
 import { ICocosAssetConversion, ICocosMigrationTool } from "../ICocosMigrationTool";
 import { formatUuid } from "../Utils";
 
@@ -143,6 +144,12 @@ export class MaterialConversion implements ICocosAssetConversion {
         if (cocosMatData._name)
             collectCandidate(String(cocosMatData._name));
 
+        if (effectCandidates.length === 0 && cocoEffectUuid) {
+            const effectName = this.readEffectName(cocoEffectUuid);
+            if (effectName)
+                collectCandidate(effectName);
+        }
+
         for (const candidate of effectCandidates) {
             const builtin = builtinShaderMap[candidate.normalized];
             if (builtin) {
@@ -211,6 +218,30 @@ export class MaterialConversion implements ICocosAssetConversion {
         if (Object.keys(renderState).length > 0) {
             layaMaterial.props.renderState = renderState;
         }
+    }
+
+    private readEffectName(uuid: string): string | null {
+        const projectRoot = this.owner.cocosProjectRoot;
+        if (!projectRoot || !uuid)
+            return null;
+
+        const folder = uuid.slice(0, 2);
+        const filePath = path.join(projectRoot, "library", folder, `${uuid}.json`);
+        if (!fs.existsSync(filePath))
+            return null;
+
+        try {
+            const content = fs.readFileSync(filePath, "utf8");
+            const data = JSON.parse(content);
+            if (typeof data?._name === "string" && data._name.length > 0)
+                return data._name;
+            if (typeof data?.name === "string" && data.name.length > 0)
+                return data.name;
+        }
+        catch (err) {
+            console.warn(`Failed to read effect asset: ${filePath}`, err);
+        }
+        return null;
     }
 
     private mapBlendFactor(cocosFactor: number): number {

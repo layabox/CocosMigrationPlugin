@@ -380,7 +380,8 @@ export class PrefabConversion implements ICocosAssetConversion {
                     if (isOverride || (value.x !== 0 || value.y !== 0 || value.z !== 0)) {
                         if (!node.transform)
                             node.transform = {};
-                        node.transform.localPosition = { _$type: "Vector3", x: value.x, y: value.y, z: value.z };
+                        const converted = convertTransformFromCocos(value);
+                        node.transform.localPosition = { _$type: "Vector3", x: converted.x, y: converted.y, z: converted.z };
                     }
                 }
                 break;
@@ -393,7 +394,8 @@ export class PrefabConversion implements ICocosAssetConversion {
                     if (isOverride || !(value.x === 0 && value.y === 0 && value.z === 0 && value.w === 1)) {
                         if (!node.transform)
                             node.transform = {};
-                        node.transform.localRotation = { _$type: "Quaternion", x: value.x, y: value.y, z: value.z, w: value.w };
+                        const converted = convertQuaternionFromCocos(value);
+                        node.transform.localRotation = { _$type: "Quaternion", x: converted.x, y: converted.y, z: converted.z, w: converted.w };
                     }
                 }
                 break;
@@ -408,7 +410,8 @@ export class PrefabConversion implements ICocosAssetConversion {
                     if (isOverride || (value.x !== 1 || value.y !== 1 || value.z !== 1)) {
                         if (!node.transform)
                             node.transform = {};
-                        node.transform.localScale = { _$type: "Vector3", x: value.x, y: value.y, z: value.z };
+                        const converted = convertScaleFromCocos(value);
+                        node.transform.localScale = { _$type: "Vector3", x: converted.x, y: converted.y, z: converted.z };
                     }
                 }
                 break;
@@ -1138,5 +1141,22 @@ export function colorToLayaColor(color: any): any {
         b: color.b / 255,
         a: color.a / 255
     };
+}
+
+function convertTransformFromCocos(value: { x: number, y: number, z: number }) {
+    if (!value)
+        return { x: 0, y: 0, z: 0 };
+    return { x: value.x, y: value.y, z: value.z };
+}
+function convertScaleFromCocos(value: { x: number, y: number, z: number }) {
+    if (!value)
+        return { x: 1, y: 1, z: 1 };
+    return { x: value.x, y: value.y, z: value.z };
+}
+
+function convertQuaternionFromCocos(value: { x: number, y: number, z: number, w: number }) {
+    if (!value)
+        return { x: 0, y: 0, z: 0, w: 1 };
+    return { x: value.x, y: value.y, z: value.z, w: value.w };
 }
 

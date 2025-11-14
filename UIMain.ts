@@ -11,7 +11,9 @@ export class UIMain {
     @IEditor.menu("App/迁移Cocos/迁移Cocos项目资源（测试）")
     static async importAssetsTest() {
         let sourceFolder = "C:/Users/WIN11/CocosEmpty3D/assets";
-        //let sourceFolder = "C:/Users/WIN11/CocosEmpty3D/assets";
+        //let sourceFolder = "C:/Users/WIN11/CocosEmpty3D2/assets";
+
+        //let sourceFolder = "C:/Users/WIN11/CocosHelloWorld/assets";
         let targetFolder = Editor.assetsPath + "/cc-assets/";
 
         Editor.scene.runScript("CocosImportMain.doImport", sourceFolder, targetFolder);
