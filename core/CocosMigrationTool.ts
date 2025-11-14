@@ -194,6 +194,7 @@ export class CocosMigrationTool implements ICocosMigrationTool {
 
             let subMetas: Array<any> = Object.values(meta.subMetas || {});
             for (let subMeta of subMetas) {
+                subMeta.userData.__layaSubName = subMeta.name;
                 this.allAssets.set(subMeta.uuid, { sourcePath, userData: subMeta.userData });
             }
         }
