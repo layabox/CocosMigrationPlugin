@@ -87,25 +87,25 @@ registerComponentParser("cc.SkinnedMeshRenderer", ({ conversion, owner, node, da
     }
 
     // 对于有 MeshFilter 的节点，scale 也需要除以 100
-    if (meshUuid) {
-        if (!node.transform) {
-            node.transform = {};
-        }
-        if (node.transform.localScale) {
-            const scale = node.transform.localScale;
-            if (typeof scale.x === "number") scale.x /= 100;
-            if (typeof scale.y === "number") scale.y /= 100;
-            if (typeof scale.z === "number") scale.z /= 100;
-        } else {
-            // 如果没有 localScale，默认值是 1，设置为 1/100 = 0.01
-            node.transform.localScale = {
-                "_$type": "Vector3",
-                x: 0.01,
-                y: 0.01,
-                z: 0.01
-            };
-        }
-    }
+    // if (meshUuid) {
+    //     if (!node.transform) {
+    //         node.transform = {};
+    //     }
+    //     if (node.transform.localScale) {
+    //         const scale = node.transform.localScale;
+    //         if (typeof scale.x === "number") scale.x /= 100;
+    //         if (typeof scale.y === "number") scale.y /= 100;
+    //         if (typeof scale.z === "number") scale.z /= 100;
+    //     } else {
+    //         // 如果没有 localScale，默认值是 1，设置为 1/100 = 0.01
+    //         node.transform.localScale = {
+    //             "_$type": "Vector3",
+    //             x: 0.01,
+    //             y: 0.01,
+    //             z: 0.01
+    //         };
+    //     }
+    // }
 
     // 处理骨骼节点的 transform
     // 1. rootBone 下面的子节点（但不包含 rootBone 节点本身）的 scale 都要除以 100
