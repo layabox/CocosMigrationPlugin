@@ -194,7 +194,30 @@ export class CocosMigrationTool implements ICocosMigrationTool {
 
             let subMetas: Array<any> = Object.values(meta.subMetas || {});
             for (let subMeta of subMetas) {
-                subMeta.userData.__layaSubName = subMeta.name;
+                let subName = subMeta.name;
+                const ext = fpath.extname(subName);
+                subName = subName.substring(0, subName.length - ext.length);
+                switch (ext) {
+                    case ".animation":
+                        subName += ".lani";
+                        break;
+                    case ".material":
+                        subName += ".lmat";
+                        break;
+                    case ".mesh":
+                        subName += ".lm";
+                        break;
+                    case ".scene":
+                        subName += ".ls";
+                        break;
+                    case ".prefab":
+                        subName += ".lh";
+                        break;
+                    default:
+                        console.warn("Unknown sub-asset name: " + subName);
+                        break;
+                }
+                subMeta.userData.__layaSubName = subName;
                 this.allAssets.set(subMeta.uuid, { sourcePath, userData: subMeta.userData });
             }
         }

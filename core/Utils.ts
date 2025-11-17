@@ -12,7 +12,10 @@ export function formatUuid(uuid: string, owner: ICocosMigrationTool): string {
             const assetInfo = EditorEnv.assetMgr.getAsset(parentUUID);
             if (assetInfo && assetInfo.children) {
                 for (const child of assetInfo.children) {
-                    if (0 == asset.userData.__layaSubName.indexOf(child.name + ".")) {
+                    // if (0 == asset.userData.__layaSubName.indexOf(child.name + ".")) {
+                    //     return child.id;
+                    // }
+                    if (asset.userData.__layaSubName === child.fileName) {
                         return child.id;
                     }
                 }

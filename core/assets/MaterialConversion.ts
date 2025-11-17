@@ -23,7 +23,7 @@ export class MaterialConversion implements ICocosAssetConversion {
             // 写入 meta 文件
             await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", { uuid: meta.uuid });
 
-            console.log(`Material converted: ${sourcePath} -> ${targetPath}`);
+            //console.log(`Material converted: ${sourcePath} -> ${targetPath}`);
         } catch (error) {
             console.error(`Failed to convert material ${sourcePath}:`, error);
             // 如果转换失败，至少复制原文件

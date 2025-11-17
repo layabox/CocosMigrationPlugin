@@ -75,7 +75,7 @@ registerComponentParser("cc.Animation", ({ owner, node, data }) => {
 });
 
 registerComponentParser("cc.SkeletalAnimation", ({ owner, node, data }) => {
-    if (!data)
+    if (!data || null !== data.defaultClip)
         return;
 
     if (!Array.isArray(node._$comp))
