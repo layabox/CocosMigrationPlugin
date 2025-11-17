@@ -45,22 +45,22 @@ registerComponentParser("cc.MeshRenderer", ({ owner, node, data }) => {
 
     // 将节点的 scale 除以 100 以匹配 Laya
     // 如果没有 localScale，默认值是 1，需要强制设置成 1/100 = 0.01
-    if (!node.transform) {
-        node.transform = {};
-    }
-    if (node.transform.localScale) {
-        const scale = node.transform.localScale;
-        if (typeof scale.x === "number") scale.x /= 100;
-        if (typeof scale.y === "number") scale.y /= 100;
-        if (typeof scale.z === "number") scale.z /= 100;
-    } else {
-        // 如果没有 localScale，默认值是 1，设置为 1/100 = 0.01
-        node.transform.localScale = {
-            "_$type": "Vector3",
-            x: 0.01,
-            y: 0.01,
-            z: 0.01
-        };
-    }
+    // if (!node.transform) {
+    //     node.transform = {};
+    // }
+    // if (node.transform.localScale) {
+    //     const scale = node.transform.localScale;
+    //     if (typeof scale.x === "number") scale.x /= 100;
+    //     if (typeof scale.y === "number") scale.y /= 100;
+    //     if (typeof scale.z === "number") scale.z /= 100;
+    // } else {
+    //     // 如果没有 localScale，默认值是 1，设置为 1/100 = 0.01
+    //     node.transform.localScale = {
+    //         "_$type": "Vector3",
+    //         x: 0.01,
+    //         y: 0.01,
+    //         z: 0.01
+    //     };
+    // }
 });
 
