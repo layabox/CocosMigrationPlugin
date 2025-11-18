@@ -71,8 +71,11 @@ registerComponentParser("cc.SkinnedMeshRenderer", ({ conversion, owner, node, da
             const collected: Array<{ "_$ref": string }> = [];
             for (const jointPath of jointPaths) {
                 const node = findNodeByJointPath(pathMap, jointPath, getNodeDisplayName(rootBoneNode));
-                if (node && typeof node._$id === "string")
+                if (node && typeof node._$id === "string") {
                     collected.push({ "_$ref": node._$id });
+                } else {
+                    console.warn(`Failed to find node by joint path: ${jointPath}`);
+                }
             }
             if (collected.length > 0)
                 bones = collected;

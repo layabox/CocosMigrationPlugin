@@ -14,6 +14,9 @@ export class PrefabConversion implements ICocosAssetConversion {
     private removedElements: Set<number>;
     private elements: Array<any>;
     private inCanvas: number;
+    // 待解析的组件列表：先解析所有节点，再统一解析组件
+    // 这样可以确保组件解析器访问任何节点时，所有节点都已完全解析完成
+    private pendingComponents: Array<{ node: any, compData: any, parentNode: any }>;
 
     constructor(private owner: ICocosMigrationTool) {
     }
@@ -39,10 +42,12 @@ export class PrefabConversion implements ICocosAssetConversion {
         this.nodeMap = new Map();
         this.removedElements = new Set();
         this.inCanvas = 0;
+        this.pendingComponents = []; // 初始化待解析组件列表
 
         let ccAsset = elements[0];
         //ccAsset.name
 
+        // 第一阶段：解析所有节点（包括子节点），但不解析组件
         let node = this.parseNode(null, 1);
         node = Object.assign({ "_$ver": 1 }, node);
         if (node._$type === "Scene") {
@@ -81,6 +86,10 @@ export class PrefabConversion implements ICocosAssetConversion {
             i++;
         }
 
+        // 第二阶段：所有节点解析完成后，统一解析所有组件
+        // 这样可以确保组件解析器（如 SkinnedMeshRenderer）在访问子节点时，所有节点都已完全解析完成
+        this.parseAllPendingComponents();
+
         this.nodeHooks.forEach(hook => hook());
 
         return node;
@@ -93,6 +102,7 @@ export class PrefabConversion implements ICocosAssetConversion {
             this.elements = task.elements;
             this.nodeMap = task.nodeMap;
             this.nodeHooks = [];
+            this.pendingComponents = []; // 初始化待解析组件列表（虽然 complete 中直接解析，但保持一致性）
 
             for (let info of overrides) {
                 let targetInfo = this.overrideTargets.get(info.targetId);
@@ -292,6 +302,9 @@ export class PrefabConversion implements ICocosAssetConversion {
         node._$child = [];
         node._$comp = [];
 
+        // 重要：不在此处解析组件，而是将组件信息记录到待解析列表
+        // 等所有节点（包括子节点）都解析完成后，再统一解析组件
+        // 这样可以确保组件解析器访问任何节点时，所有节点都已完全解析完成
         if (data._components?.length > 0) {
             let spriteData: any;
             for (let idInfo of data._components) {
@@ -306,10 +319,12 @@ export class PrefabConversion implements ICocosAssetConversion {
                     spriteData = compData;
                     continue;
                 }
-                this.parseComponent(node, compData);
+                // 将组件添加到待解析列表，而不是立即解析
+                this.pendingComponents.push({ node, compData, parentNode });
             }
+            // cc.Sprite 组件也需要添加到待解析列表，但标记为最后处理
             if (spriteData)
-                this.parseComponent(node, spriteData);
+                this.pendingComponents.push({ node, compData: spriteData, parentNode });
         }
 
         if (data._children?.length > 0) {
@@ -346,6 +361,27 @@ export class PrefabConversion implements ICocosAssetConversion {
             this.inCanvas--;
 
         return node;
+    }
+
+    /**
+     * 统一解析所有待解析的组件
+     * 在所有节点解析完成后调用，确保组件解析器可以安全访问任何节点
+     */
+    private parseAllPendingComponents(): void {
+        // 先解析非 cc.Sprite 组件
+        for (const { node, compData, parentNode } of this.pendingComponents) {
+            if (compData.__type__ !== "cc.Sprite") {
+                this.parseComponent(node, compData);
+            }
+        }
+        // 最后解析 cc.Sprite 组件（保持原有逻辑）
+        for (const { node, compData, parentNode } of this.pendingComponents) {
+            if (compData.__type__ === "cc.Sprite") {
+                this.parseComponent(node, compData);
+            }
+        }
+        // 清空待解析列表
+        this.pendingComponents = [];
     }
 
     private parseNodeProps(parentNode: any, node: any, key: string, value: any, is2d: boolean, isOverride?: boolean) {
