@@ -25,7 +25,7 @@ export function formatUuid(uuid: string, owner: ICocosMigrationTool): string {
                     const ext = fpath.extname(asset.userData.__layaSubName);
                     for (const child of assetInfo.children) {
                         const childExt = fpath.extname(child.fileName);
-                        if (".animation" === ext && ".lani" === childExt) {
+                        if (".lani" === ext && ".lani" === childExt) {
                             return child.id;
                         }
                     }
