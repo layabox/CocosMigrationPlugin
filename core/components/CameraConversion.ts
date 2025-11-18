@@ -10,7 +10,9 @@ registerComponentParser("cc.Camera", ({ owner, node, data }) => {
 
     const projection = typeof data._projection === "number" ? data._projection : undefined;
     if (projection !== undefined)
-        node.orthographic = projection !== 0;
+        // Cocos Creator: 0 = ORTHO (正交投影), 1 = PERSPECTIVE (透视投影)
+        // Laya: orthographic = true 表示正交投影, false 表示透视投影
+        node.orthographic = projection === 0;
 
     if (typeof data._orthoHeight === "number")
         node.orthographicVerticalSize = data._orthoHeight;
