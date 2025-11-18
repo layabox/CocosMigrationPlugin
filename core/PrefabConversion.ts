@@ -714,6 +714,9 @@ export class PrefabConversion implements ICocosAssetConversion {
                         "fillColor": "#ffffff"
                     };
                 }
+                // 确保 _$child 存在（可能在 parseNode 中被删除了）
+                if (!Array.isArray(node._$child))
+                    node._$child = [];
                 node._$child.push(maskNode);
                 node.mask = { _$ref: maskNode._$id };
                 break;
@@ -1012,6 +1015,9 @@ export class PrefabConversion implements ICocosAssetConversion {
         let contentNode = this.nodeMap.get(contentIdInfo.__id__);
 
         if (contentNode._$child) {
+            // 确保目标节点的 _$child 存在（可能在 parseNode 中被删除了）
+            if (!Array.isArray(node._$child))
+                node._$child = [];
             for (let child of contentNode._$child) {
                 if (viewNode != contentNode) {
                     child.x += viewNode.x - (viewNode.anchorX ?? 0) * viewNode.width;
