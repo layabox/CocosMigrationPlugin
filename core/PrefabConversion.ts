@@ -17,6 +17,7 @@ export class PrefabConversion implements ICocosAssetConversion {
     // 待解析的组件列表：先解析所有节点，再统一解析组件
     // 这样可以确保组件解析器访问任何节点时，所有节点都已完全解析完成
     private pendingComponents: Array<{ node: any, compData: any, parentNode: any }>;
+    private finalRootNode: any; // 保存最终保存的根节点引用，用于在 parseAllPendingComponents 中查找最终保存的节点
 
     constructor(private owner: ICocosMigrationTool) {
     }
@@ -85,6 +86,9 @@ export class PrefabConversion implements ICocosAssetConversion {
             }
             i++;
         }
+
+        // 保存最终保存的根节点引用（在 Object.assign 之后）
+        this.finalRootNode = node;
 
         // 第二阶段：所有节点解析完成后，统一解析所有组件
         // 这样可以确保组件解析器（如 SkinnedMeshRenderer）在访问子节点时，所有节点都已完全解析完成
@@ -368,16 +372,43 @@ export class PrefabConversion implements ICocosAssetConversion {
      * 在所有节点解析完成后调用，确保组件解析器可以安全访问任何节点
      */
     private parseAllPendingComponents(): void {
+        // 通过 _$id 从最终保存的节点树中查找对应的 node
+        // 这样可以确保修改的是最终保存的对象，而不是缓存的引用
+        const findNodeById = (root: any, targetId: string): any => {
+            if (root._$id === targetId) {
+                return root;
+            }
+            if (root._$child) {
+                for (const child of root._$child) {
+                    const found = findNodeById(child, targetId);
+                    if (found) {
+                        return found;
+                    }
+                }
+            }
+            return null;
+        };
+
         // 先解析非 cc.Sprite 组件
         for (const { node, compData, parentNode } of this.pendingComponents) {
             if (compData.__type__ !== "cc.Sprite") {
-                this.parseComponent(node, compData);
+                // 从最终保存的节点树中查找对应的 node
+                // Object.assign 是浅拷贝，根节点是新对象，但子节点引用不变
+                // 所以需要通过 _$id 查找根节点，子节点可以直接使用原始引用
+                const targetNode = this.finalRootNode && node._$id === this.finalRootNode._$id 
+                    ? this.finalRootNode 
+                    : (this.finalRootNode ? findNodeById(this.finalRootNode, node._$id) : null) || node;
+                this.parseComponent(targetNode, compData);
             }
         }
         // 最后解析 cc.Sprite 组件（保持原有逻辑）
         for (const { node, compData, parentNode } of this.pendingComponents) {
             if (compData.__type__ === "cc.Sprite") {
-                this.parseComponent(node, compData);
+                // 从最终保存的节点树中查找对应的 node
+                const targetNode = this.finalRootNode && node._$id === this.finalRootNode._$id 
+                    ? this.finalRootNode 
+                    : (this.finalRootNode ? findNodeById(this.finalRootNode, node._$id) : null) || node;
+                this.parseComponent(targetNode, compData);
             }
         }
         // 清空待解析列表

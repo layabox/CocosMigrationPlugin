@@ -4,6 +4,7 @@ import "./core/components/DirectionLightConversion";
 import "./core/components/CameraConversion";
 import "./core/components/SkinnedMeshRendererConversion";
 import "./core/components/AnimationConversion";
+import "./core/components/BoxColliderConversion";
 
 @IEditorEnv.regClass()
 export class CocosImportMain {
