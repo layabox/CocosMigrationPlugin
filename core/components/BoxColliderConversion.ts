@@ -17,7 +17,7 @@ registerComponentParser("cc.BoxCollider", ({ owner, node, data }) => {
         return comp;
     };
 
-    const rigidbody = ensureComp("Rigidbody3D");
+    const rigidbody = ensureComp("PhysicsCollider");
 
     // 创建 BoxColliderShape
     const colliderShape: any = {
