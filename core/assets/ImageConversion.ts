@@ -39,10 +39,9 @@ export class ImageConversion implements ICocosAssetConversion {
             }
             else if (subMeta.importer == "texture") {
                 importerData.generateMipmap = userData.mipfilter !== "none";
-                // if (userData.wrapModeS == "mirrored-repeat")
-                //     importerData.wrapMode = 2;
-                // else if (userData.wrapModeS == "clamp-to-edge")
-                //     importerData.wrapMode = 1;
+                // 强制写入 wrapMode: 0，因为 Cocos 和 Laya 的默认值不同
+                // Cocos 默认可能是其他值，Laya 默认是 0（repeat），需要明确指定
+                importerData.wrapMode = 0;
                 if (userData.minfilter == "nearest")
                     importerData.filterMode = 0;
                 else

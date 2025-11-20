@@ -517,7 +517,8 @@ export class MaterialConversion implements ICocosAssetConversion {
                 return Array.from(shaderUniformInfo.vectors)[0];
             }
             
-            // 如果都没有，返回第一个可能的名称作为默认值
+            // 如果都没有，返回第一个可能的名称作为默认值（即使 shader 中没有，也使用这个名称）
+            // 这样即使 shader 中没有对应的 uniform，也会添加属性（可能是用户自定义的属性）
             return possibleNames[0] || null;
         };
 
@@ -548,9 +549,28 @@ export class MaterialConversion implements ICocosAssetConversion {
             }
             
             // 如果 shaderUniformInfo 存在且有 uniform，检查 uniform 是否存在
-            if (shaderUniformInfo && shaderUniformInfo.all.size > 0 && !shaderUniformInfo.all.has(uniformName)) {
-                console.log(`[MaterialConversion] Skipping property ${cocosPropName} - uniform ${uniformName} not found in shader`);
-                return;
+            // 如果 shader 中找不到对应的 uniform，仍然添加（使用默认名称），因为可能是用户自定义的属性
+            // 只有在 shader 文件明确存在且能找到对应类型的 uniform 时，才进行类型匹配检查
+            if (shaderUniformInfo && shaderUniformInfo.all.size > 0) {
+                // 如果 shader 中有对应类型的 uniform，但找不到匹配的，尝试使用第一个同类型的 uniform
+                if (valueType === "color" && shaderUniformInfo.colors.size > 0 && !shaderUniformInfo.colors.has(uniformName)) {
+                    // 如果 shader 中有颜色 uniform，但当前名称不匹配，使用第一个颜色 uniform
+                    const firstColor = Array.from(shaderUniformInfo.colors)[0];
+                    console.log(`[MaterialConversion] Property ${cocosPropName} uniform ${uniformName} not found in shader, using first color uniform: ${firstColor}`);
+                    setColor(firstColor, value);
+                    return;
+                }
+                if (valueType === "texture" && shaderUniformInfo.textures.size > 0 && !shaderUniformInfo.textures.has(uniformName)) {
+                    // 如果 shader 中有纹理 uniform，但当前名称不匹配，使用第一个纹理 uniform
+                    const firstTexture = Array.from(shaderUniformInfo.textures)[0];
+                    console.log(`[MaterialConversion] Property ${cocosPropName} uniform ${uniformName} not found in shader, using first texture uniform: ${firstTexture}`);
+                    addTexture(firstTexture, value, "ALBEDOTEXTURE");
+                    return;
+                }
+                // 如果 shader 中没有对应类型的 uniform，或者找到了匹配的，继续使用 uniformName
+                if (!shaderUniformInfo.all.has(uniformName)) {
+                    console.log(`[MaterialConversion] Property ${cocosPropName} uniform ${uniformName} not found in shader, but adding anyway (may be custom property)`);
+                }
             }
             
             console.log(`[MaterialConversion] Adding property ${cocosPropName} as ${uniformName}`);

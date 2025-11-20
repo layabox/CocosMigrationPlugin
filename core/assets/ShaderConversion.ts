@@ -119,73 +119,44 @@ export class ShaderConversion implements ICocosAssetConversion {
             }
         }
 
-        // 收集所有 properties 和 defines
-        const defines = new Set<string>();
-        const uniforms = collectPropertiesFromYAML(yamlData, defines);
-        
-        // 从 GLSL 代码中收集宏定义
-        collectDefinesFromCode(effectContent, defines);
-
-        // 从 GLSL 代码中提取额外的 uniforms
-        for (const [programName, programCode] of programs.entries()) {
-            extractUniformsFromCode(programCode, uniforms);
-        }
-        
-        // 建立从原始变量名到 uniform 名称的动态映射表
-        // 这个映射表用于在 GLSL 代码转换时替换变量名
-        const variableToUniformMap = new Map<string, string>();
-        
-        // 从 properties 中收集原始变量名
-        const collectOriginalNames = (props: any, map: Map<string, string>) => {
-            if (!props || typeof props !== "object") return;
-            for (const [propertyName, propertyData] of Object.entries(props)) {
-                if (!propertyData || typeof propertyData !== "object") continue;
-                const uniformName = ensureUniformName(propertyName);
-                map.set(propertyName, uniformName);
+        // 辅助函数：为单个 technique 收集 properties（严格只从 Cocos properties 中读取）
+        const collectTechniqueProperties = (technique: Technique): Map<string, string> => {
+            const techniqueUniforms = new Map<string, string>();
+            const techniqueDefines = new Set<string>();
+            
+            // 严格只从 technique 的 passes 的 properties 中收集，不从代码中提取
+            for (const pass of technique.passes) {
+                if (pass.properties && typeof pass.properties === "object") {
+                    extractPropertiesFromYAML(pass.properties, techniqueUniforms, techniqueDefines);
+                }
             }
+            
+            return techniqueUniforms;
         };
         
-        // 从所有 techniques 的 passes 中收集 properties
-        if (yamlData.techniques && Array.isArray(yamlData.techniques)) {
-            for (const tech of yamlData.techniques) {
-                if (tech.passes && Array.isArray(tech.passes)) {
-                    for (const pass of tech.passes) {
-                        if (pass.properties) {
-                            collectOriginalNames(pass.properties, variableToUniformMap);
+        // 辅助函数：为单个 technique 建立 variableToUniformMap（严格只从 properties 中读取）
+        const buildVariableToUniformMap = (technique: Technique, techniqueUniforms: Map<string, string>): Map<string, string> => {
+            const variableToUniformMap = new Map<string, string>();
+            
+            // 严格只从 technique 的 properties 中收集原始变量名
+            for (const pass of technique.passes) {
+                if (pass.properties && typeof pass.properties === "object") {
+                    for (const [propertyName] of Object.entries(pass.properties)) {
+                        const uniformName = ensureUniformName(propertyName);
+                        variableToUniformMap.set(propertyName, uniformName);
+                        // 也支持直接使用 uniformName（如果代码中已经使用了 u_ 前缀）
+                        variableToUniformMap.set(uniformName, uniformName);
+                        // 如果 uniformName 有 u_ 前缀，也建立反向映射
+                        if (uniformName.startsWith("u_")) {
+                            const originalName = uniformName.substring(2);
+                            variableToUniformMap.set(originalName, uniformName);
                         }
                     }
                 }
             }
-        }
-        
-        // 从 uniform blocks 中收集原始变量名（已经在 extractUniformsFromCode 中处理了）
-        // 但我们需要建立反向映射：从 uniformName 反推原始名称
-        // 由于 uniformName 是通过 ensureUniformName 生成的，原始名称可能是去掉 u_ 前缀的
-        for (const [uniformName, type] of uniforms.entries()) {
-            if (uniformName.startsWith("u_")) {
-                const originalName = uniformName.substring(2);
-                variableToUniformMap.set(originalName, uniformName);
-            }
-            // 也支持直接使用 uniformName（如果代码中已经使用了 u_ 前缀）
-            variableToUniformMap.set(uniformName, uniformName);
-        }
-        
-        // 检查是否真的需要 u_TilingOffset
-        // 只有在使用标准的 transformUV 时才需要，如果使用自定义的 v_uv，则不需要
-        const usesStandardUV = Array.from(programs.values()).some(code => {
-            // 检查是否使用了标准的 v_Texcoord0 或 transformUV
-            // 如果只是使用自定义的 v_uv，则不需要 u_TilingOffset
-            const hasCustomUV = code.includes("v_uv") && !code.includes("v_Texcoord0");
-            const hasStandardUV = code.includes("v_Texcoord0") || code.includes("transformUV");
-            return hasStandardUV && !hasCustomUV;
-        });
-        
-        // 只有在使用标准 UV 处理且代码中没有自定义的 tiling/offset 时才添加
-        if (usesStandardUV && !uniforms.has("u_TilingOffset")) {
-            uniforms.set("u_TilingOffset", "Vector4");
-            variableToUniformMap.set("TilingOffset", "u_TilingOffset");
-            variableToUniformMap.set("tilingOffset", "u_TilingOffset");
-        }
+            
+            return variableToUniformMap;
+        };
 
         // 为每个 technique 生成一个独立的 shader 文件
         // 始终使用 原文件名_technique名称.shader 的格式，即使只有一个 technique
@@ -194,7 +165,10 @@ export class ShaderConversion implements ICocosAssetConversion {
             console.log(`[ShaderConversion] No techniques found, generating default shader: ${shaderName}_default.shader`);
             const defaultTechniqueName = "default";
             const techniqueShaderName = `${shaderName}_${defaultTechniqueName}`;
-            const shaderContent = composeShader(techniqueShaderName, uniforms, defines, programs, [], variableToUniformMap);
+            const defaultUniforms = new Map<string, string>();
+            const defaultDefines = new Set<string>();
+            const defaultVariableMap = new Map<string, string>();
+            const shaderContent = composeShader(techniqueShaderName, defaultUniforms, defaultDefines, programs, [], defaultVariableMap);
             
             const basePath = fpath.dirname(targetPath);
             const shaderFileName = `${shaderName}_${defaultTechniqueName}.shader`;
@@ -212,8 +186,29 @@ export class ShaderConversion implements ICocosAssetConversion {
 
                 console.log(`[ShaderConversion] Generating shader for technique: ${techniqueName}`);
 
+                // 为这个 technique 单独收集 properties（严格只从 Cocos properties 中读取）
+                const techniqueUniforms = collectTechniqueProperties(technique);
+                const techniqueDefines = new Set<string>();
+                
+                // 从 technique 的 passes 的 properties 中收集 defines（严格只从 Cocos 数据中读取）
+                for (const pass of technique.passes) {
+                    if (pass.properties && typeof pass.properties === "object") {
+                        for (const [propertyName, propertyData] of Object.entries(pass.properties)) {
+                            const prop = propertyData as any;
+                            if (prop.editor && typeof prop.editor === "object" && prop.editor.parent) {
+                                techniqueDefines.add(prop.editor.parent);
+                            } else if (prop.define) {
+                                techniqueDefines.add(prop.define);
+                            }
+                        }
+                    }
+                }
+                
+                // 为这个 technique 建立 variableToUniformMap（严格只从 properties 中读取）
+                const variableToUniformMap = buildVariableToUniformMap(technique, techniqueUniforms);
+
                 // 为这个 technique 生成 shader 内容
-                const shaderContent = composeShader(techniqueShaderName, uniforms, defines, programs, [technique], variableToUniformMap);
+                const shaderContent = composeShader(techniqueShaderName, techniqueUniforms, techniqueDefines, programs, [technique], variableToUniformMap);
 
                 // 生成文件路径：原文件名_technique名称.shader
                 const basePath = fpath.dirname(targetPath);
@@ -221,6 +216,7 @@ export class ShaderConversion implements ICocosAssetConversion {
                 const shaderPath = fpath.join(basePath, shaderFileName);
 
                 console.log(`[ShaderConversion] Writing shader file: ${shaderPath}`);
+                console.log(`[ShaderConversion] Technique ${techniqueName} uniforms:`, Array.from(techniqueUniforms.keys()));
                 await fs.promises.writeFile(shaderPath, shaderContent, "utf8");
                 console.log(`[ShaderConversion] Successfully created: ${shaderFileName}`);
 
