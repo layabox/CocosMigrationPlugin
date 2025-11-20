@@ -26,15 +26,15 @@ export var ConversionRegistry: Array<{ exts: Array<string>, type: new (owner: IC
         type: PrefabConversion
     },
     {
+        exts: ["effect"],
+        type: ShaderConversion
+    },
+    {
         exts: ["mtl"],
         type: MaterialConversion
     },
     {
         exts: ["animgraph"],
         type: AnimGraphConversion
-    },
-    {
-        exts: ["effect"],
-        type: ShaderConversion
     }
 ];
