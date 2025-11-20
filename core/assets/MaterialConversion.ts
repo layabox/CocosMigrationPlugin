@@ -289,7 +289,7 @@ export class MaterialConversion implements ICocosAssetConversion {
         const effectAsset = this.owner.allAssets.get(cocoEffectUuid);
 
         // 根据 Cocos effect 名称映射到 LayaAir shader
-        // 常见的内置材质映射
+        // 常见的内置材质映射（注意大小写要一致）
         const builtinShaderMap: Record<string, string> = {
             "builtin-standard": "BLINNPHONG",
             "builtin-unlit": "Unlit",
@@ -297,7 +297,13 @@ export class MaterialConversion implements ICocosAssetConversion {
             "builtin-particle": "PARTICLESHURIKEN",
             "builtin-spine": "Spine",
             "builtin-sprite": "Sprite2D",
-            "builtin-terrain": "Terrain"
+            "builtin-terrain": "Terrain",
+            "builtin-pbr": "PBR",
+            "builtin-trail": "Trail",
+            "builtin-skybox": "SkyBox",
+            "builtin-sky-panoramic": "SkyPanoramic",
+            "builtin-sky-procedural": "SkyProcedural",
+            "builtin-gltf-pbr": "glTFPBR"
         };
         const effectCandidates: Array<{ raw: string, normalized: string }> = [];
 
@@ -462,10 +468,12 @@ export class MaterialConversion implements ICocosAssetConversion {
     private convertMaterialProps(layaMaterial: any, cocosProps: any, defines: any, shaderUniformInfo?: { all: Set<string>, textures: Set<string>, colors: Set<string>, vectors: Set<string> }): void {
         const layaProps = layaMaterial.props;
         const textures: Array<any> = layaProps.textures;
-        const shaderType = (layaProps.type || "").toString().toLowerCase();
+        const shaderType = (layaProps.type || "").toString();
+        const shaderTypeLower = shaderType.toLowerCase();
         const handledKeys = new Set<string>();
         
         console.log(`[MaterialConversion] Converting material props. Cocos props keys:`, Object.keys(cocosProps || {}));
+        console.log(`[MaterialConversion] Shader type: ${shaderType}`);
         console.log(`[MaterialConversion] Shader uniform info:`, shaderUniformInfo ? {
             all: Array.from(shaderUniformInfo.all),
             textures: Array.from(shaderUniformInfo.textures),
@@ -473,9 +481,61 @@ export class MaterialConversion implements ICocosAssetConversion {
             vectors: Array.from(shaderUniformInfo.vectors)
         } : "null");
         
+        // 判断是否是 Laya 内置 shader（注意大小写要一致）
+        const isBuiltinShader = (type: string): boolean => {
+            const builtinShaders = ["BLINNPHONG", "Unlit", "PBR", "PARTICLESHURIKEN", "Trail", "SkyBox", "SkyPanoramic", "SkyProcedural", "glTFPBR"];
+            return builtinShaders.includes(type);
+        };
+        
+        // Laya 内置 shader 的 uniform 名称映射（Cocos 属性名 -> Laya uniform 名）
+        // 注意：键名必须与 shader 类型完全一致（大小写敏感）
+        const builtinShaderUniformMap: Record<string, Record<string, string>> = {
+            "Unlit": {
+                "mainTexture": "u_AlbedoTexture",
+                "mainColor": "u_AlbedoColor",
+                "albedoTexture": "u_AlbedoTexture",
+                "albedoColor": "u_AlbedoColor",
+                "baseColorTexture": "u_AlbedoTexture",
+                "baseColor": "u_AlbedoColor"
+            },
+            "BLINNPHONG": {
+                "mainTexture": "u_DiffuseTexture",
+                "mainColor": "u_DiffuseColor",
+                "diffuseTexture": "u_DiffuseTexture",
+                "diffuseColor": "u_DiffuseColor"
+            },
+            "PBR": {
+                "mainTexture": "u_AlbedoTexture",
+                "mainColor": "u_AlbedoColor",
+                "albedoTexture": "u_AlbedoTexture",
+                "albedoColor": "u_AlbedoColor",
+                "baseColorTexture": "u_AlbedoTexture",
+                "baseColor": "u_AlbedoColor"
+            },
+            "glTFPBR": {
+                "mainTexture": "u_AlbedoTexture",
+                "mainColor": "u_AlbedoColor",
+                "albedoTexture": "u_AlbedoTexture",
+                "albedoColor": "u_AlbedoColor",
+                "baseColorTexture": "u_AlbedoTexture",
+                "baseColor": "u_AlbedoColor"
+            }
+        };
+        
         // 从 shader 中查找 uniform 名称（根据 Cocos 属性名动态查找）
         // 不硬编码变量名，而是根据属性名生成可能的 uniform 名称，然后在 shader 中查找
         const findUniformByName = (cocosPropName: string, uniformType: "texture" | "color" | "vector" | "any"): string | null => {
+            // 如果是 Laya 内置 shader，优先使用内置 shader 的 uniform 名称映射
+            if (isBuiltinShader(shaderType)) {
+                // 注意：使用原始的 shaderType（大小写敏感），而不是 shaderTypeLower
+                const builtinMap = builtinShaderUniformMap[shaderType];
+                if (builtinMap && builtinMap[cocosPropName]) {
+                    const mappedName = builtinMap[cocosPropName];
+                    // 对于内置 shader，强制使用映射的名称（即使 shader 文件中找不到，因为内置 shader 的 uniform 名称是固定的）
+                    console.log(`[MaterialConversion] Using builtin shader uniform mapping: ${cocosPropName} -> ${mappedName} (shader: ${shaderType})`);
+                    return mappedName;
+                }
+            }
             // 根据 Cocos 属性名生成可能的 uniform 名称
             const possibleNames = [
                 this.toUniformName(cocosPropName), // 最可能：mainColor -> u_mainColor
