@@ -62,19 +62,22 @@ export class MaterialConversion implements ICocosAssetConversion {
         };
 
         // 解析 Cocos 材质数据
-        const technique = cocosMatData._techIdx ?? 0;
+        const techniqueIndex = cocosMatData._techIdx ?? 0;
         const effectUuid = cocosMatData._effectAsset?.__uuid__ || "";
         const defines = this.normalizeDefines(cocosMatData._defines);
         const props = this.normalizeProps(cocosMatData._props);
 
+        // 获取 technique 名称（用于生成正确的 shader 文件名）
+        const techniqueName = this.getTechniqueName(effectUuid, techniqueIndex);
+
         // 映射 Shader 名称
-        const shaderInfo = this.resolveShaderInfo(effectUuid, cocosMatData, defines);
+        const shaderInfo = this.resolveShaderInfo(effectUuid, cocosMatData, defines, techniqueName);
         layaMaterial.props.type = shaderInfo.type;
         if (shaderInfo.source)
             layaMaterial.props._cocosEffect = shaderInfo.source;
 
         // 转换渲染状态
-        const states = cocosMatData._states?.[technique];
+        const states = cocosMatData._states?.[techniqueIndex];
         if (states) {
             this.convertRenderStates(layaMaterial, states);
         }
@@ -99,7 +102,59 @@ export class MaterialConversion implements ICocosAssetConversion {
         return props || {};
     }
 
-    private resolveShaderInfo(cocoEffectUuid: string, cocosMatData: any, defines: any): { type: string, source?: string } {
+    private getTechniqueName(effectUuid: string, techniqueIndex: number): string | null {
+        if (!effectUuid) return null;
+        
+        // 查找 effect 资源
+        const effectAsset = this.owner.allAssets.get(effectUuid);
+        if (!effectAsset?.sourcePath) return null;
+
+        try {
+            // 读取 effect 文件内容
+            const effectContent = fs.readFileSync(effectAsset.sourcePath, "utf8");
+            
+            // 提取 CCEffect 块
+            const startMarker = "CCEffect";
+            const startIndex = effectContent.indexOf(startMarker);
+            if (startIndex === -1) return null;
+
+            let braceStart = effectContent.indexOf("%{", startIndex);
+            if (braceStart === -1) return null;
+
+            // 查找对应的 }% 结束位置
+            let depth = 1;
+            let i = braceStart + 2;
+            while (i < effectContent.length && depth > 0) {
+                if (effectContent.substring(i, i + 2) === "}%") {
+                    depth--;
+                    if (depth === 0) {
+                        const effectBody = effectContent.substring(braceStart + 2, i).trim();
+                        
+                        // 解析 YAML 获取 techniques
+                        const yaml = require("../../lib/js-yaml.js");
+                        const yamlData = yaml.load(effectBody);
+                        
+                        if (yamlData?.techniques && Array.isArray(yamlData.techniques)) {
+                            const technique = yamlData.techniques[techniqueIndex];
+                            if (technique?.name) {
+                                return technique.name;
+                            }
+                        }
+                        return null;
+                    }
+                } else if (effectContent.substring(i, i + 2) === "%{") {
+                    depth++;
+                }
+                i++;
+            }
+        } catch (error) {
+            console.warn(`Failed to read technique name from effect: ${effectAsset.sourcePath}`, error);
+        }
+        
+        return null;
+    }
+
+    private resolveShaderInfo(cocoEffectUuid: string, cocosMatData: any, defines: any, techniqueName?: string | null): { type: string, source?: string } {
         // 获取 effect 资源信息
         const effectAsset = this.owner.allAssets.get(cocoEffectUuid);
 
@@ -159,7 +214,18 @@ export class MaterialConversion implements ICocosAssetConversion {
 
         if (effectCandidates.length > 0) {
             const first = effectCandidates[0];
-            return { type: this.toLayaTypeName(first.raw), source: first.raw };
+            let shaderName = this.toLayaTypeName(first.raw);
+            
+            // 始终使用 technique 名称作为后缀（即使只有一个 technique）
+            // 格式：原文件名_technique名称
+            if (techniqueName) {
+                shaderName = `${shaderName}_${techniqueName}`;
+            } else {
+                // 如果没有 technique 名称，使用默认的 "default"
+                shaderName = `${shaderName}_default`;
+            }
+            
+            return { type: shaderName, source: first.raw };
         }
 
         // 根据 defines 判断特性
