@@ -14,6 +14,10 @@ export class PrefabConversion implements ICocosAssetConversion {
     private removedElements: Set<number>;
     private elements: Array<any>;
     private inCanvas: number;
+    // 待解析的组件列表：先解析所有节点，再统一解析组件
+    // 这样可以确保组件解析器访问任何节点时，所有节点都已完全解析完成
+    private pendingComponents: Array<{ node: any, compData: any, parentNode: any }>;
+    private finalRootNode: any; // 保存最终保存的根节点引用，用于在 parseAllPendingComponents 中查找最终保存的节点
 
     constructor(private owner: ICocosMigrationTool) {
     }
@@ -39,10 +43,12 @@ export class PrefabConversion implements ICocosAssetConversion {
         this.nodeMap = new Map();
         this.removedElements = new Set();
         this.inCanvas = 0;
+        this.pendingComponents = []; // 初始化待解析组件列表
 
         let ccAsset = elements[0];
         //ccAsset.name
 
+        // 第一阶段：解析所有节点（包括子节点），但不解析组件
         let node = this.parseNode(null, 1);
         node = Object.assign({ "_$ver": 1 }, node);
         if (node._$type === "Scene") {
@@ -81,6 +87,13 @@ export class PrefabConversion implements ICocosAssetConversion {
             i++;
         }
 
+        // 保存最终保存的根节点引用（在 Object.assign 之后）
+        this.finalRootNode = node;
+
+        // 第二阶段：所有节点解析完成后，统一解析所有组件
+        // 这样可以确保组件解析器（如 SkinnedMeshRenderer）在访问子节点时，所有节点都已完全解析完成
+        this.parseAllPendingComponents();
+
         this.nodeHooks.forEach(hook => hook());
 
         return node;
@@ -93,6 +106,7 @@ export class PrefabConversion implements ICocosAssetConversion {
             this.elements = task.elements;
             this.nodeMap = task.nodeMap;
             this.nodeHooks = [];
+            this.pendingComponents = []; // 初始化待解析组件列表（虽然 complete 中直接解析，但保持一致性）
 
             for (let info of overrides) {
                 let targetInfo = this.overrideTargets.get(info.targetId);
@@ -292,6 +306,9 @@ export class PrefabConversion implements ICocosAssetConversion {
         node._$child = [];
         node._$comp = [];
 
+        // 重要：不在此处解析组件，而是将组件信息记录到待解析列表
+        // 等所有节点（包括子节点）都解析完成后，再统一解析组件
+        // 这样可以确保组件解析器访问任何节点时，所有节点都已完全解析完成
         if (data._components?.length > 0) {
             let spriteData: any;
             for (let idInfo of data._components) {
@@ -306,10 +323,12 @@ export class PrefabConversion implements ICocosAssetConversion {
                     spriteData = compData;
                     continue;
                 }
-                this.parseComponent(node, compData);
+                // 将组件添加到待解析列表，而不是立即解析
+                this.pendingComponents.push({ node, compData, parentNode });
             }
+            // cc.Sprite 组件也需要添加到待解析列表，但标记为最后处理
             if (spriteData)
-                this.parseComponent(node, spriteData);
+                this.pendingComponents.push({ node, compData: spriteData, parentNode });
         }
 
         if (data._children?.length > 0) {
@@ -348,6 +367,54 @@ export class PrefabConversion implements ICocosAssetConversion {
         return node;
     }
 
+    /**
+     * 统一解析所有待解析的组件
+     * 在所有节点解析完成后调用，确保组件解析器可以安全访问任何节点
+     */
+    private parseAllPendingComponents(): void {
+        // 通过 _$id 从最终保存的节点树中查找对应的 node
+        // 这样可以确保修改的是最终保存的对象，而不是缓存的引用
+        const findNodeById = (root: any, targetId: string): any => {
+            if (root._$id === targetId) {
+                return root;
+            }
+            if (root._$child) {
+                for (const child of root._$child) {
+                    const found = findNodeById(child, targetId);
+                    if (found) {
+                        return found;
+                    }
+                }
+            }
+            return null;
+        };
+
+        // 先解析非 cc.Sprite 组件
+        for (const { node, compData, parentNode } of this.pendingComponents) {
+            if (compData.__type__ !== "cc.Sprite") {
+                // 从最终保存的节点树中查找对应的 node
+                // Object.assign 是浅拷贝，根节点是新对象，但子节点引用不变
+                // 所以需要通过 _$id 查找根节点，子节点可以直接使用原始引用
+                const targetNode = this.finalRootNode && node._$id === this.finalRootNode._$id 
+                    ? this.finalRootNode 
+                    : (this.finalRootNode ? findNodeById(this.finalRootNode, node._$id) : null) || node;
+                this.parseComponent(targetNode, compData);
+            }
+        }
+        // 最后解析 cc.Sprite 组件（保持原有逻辑）
+        for (const { node, compData, parentNode } of this.pendingComponents) {
+            if (compData.__type__ === "cc.Sprite") {
+                // 从最终保存的节点树中查找对应的 node
+                const targetNode = this.finalRootNode && node._$id === this.finalRootNode._$id 
+                    ? this.finalRootNode 
+                    : (this.finalRootNode ? findNodeById(this.finalRootNode, node._$id) : null) || node;
+                this.parseComponent(targetNode, compData);
+            }
+        }
+        // 清空待解析列表
+        this.pendingComponents = [];
+    }
+
     private parseNodeProps(parentNode: any, node: any, key: string, value: any, is2d: boolean, isOverride?: boolean) {
         switch (key) {
             case "_name":
@@ -380,7 +447,8 @@ export class PrefabConversion implements ICocosAssetConversion {
                     if (isOverride || (value.x !== 0 || value.y !== 0 || value.z !== 0)) {
                         if (!node.transform)
                             node.transform = {};
-                        node.transform.localPosition = { _$type: "Vector3", x: value.x, y: value.y, z: value.z };
+                        const converted = convertTransformFromCocos(value);
+                        node.transform.localPosition = { _$type: "Vector3", x: converted.x, y: converted.y, z: converted.z };
                     }
                 }
                 break;
@@ -393,7 +461,8 @@ export class PrefabConversion implements ICocosAssetConversion {
                     if (isOverride || !(value.x === 0 && value.y === 0 && value.z === 0 && value.w === 1)) {
                         if (!node.transform)
                             node.transform = {};
-                        node.transform.localRotation = { _$type: "Quaternion", x: value.x, y: value.y, z: value.z, w: value.w };
+                        const converted = convertQuaternionFromCocos(value);
+                        node.transform.localRotation = { _$type: "Quaternion", x: converted.x, y: converted.y, z: converted.z, w: converted.w };
                     }
                 }
                 break;
@@ -408,7 +477,8 @@ export class PrefabConversion implements ICocosAssetConversion {
                     if (isOverride || (value.x !== 1 || value.y !== 1 || value.z !== 1)) {
                         if (!node.transform)
                             node.transform = {};
-                        node.transform.localScale = { _$type: "Vector3", x: value.x, y: value.y, z: value.z };
+                        const converted = convertScaleFromCocos(value);
+                        node.transform.localScale = { _$type: "Vector3", x: converted.x, y: converted.y, z: converted.z };
                     }
                 }
                 break;
@@ -675,6 +745,9 @@ export class PrefabConversion implements ICocosAssetConversion {
                         "fillColor": "#ffffff"
                     };
                 }
+                // 确保 _$child 存在（可能在 parseNode 中被删除了）
+                if (!Array.isArray(node._$child))
+                    node._$child = [];
                 node._$child.push(maskNode);
                 node.mask = { _$ref: maskNode._$id };
                 break;
@@ -973,6 +1046,9 @@ export class PrefabConversion implements ICocosAssetConversion {
         let contentNode = this.nodeMap.get(contentIdInfo.__id__);
 
         if (contentNode._$child) {
+            // 确保目标节点的 _$child 存在（可能在 parseNode 中被删除了）
+            if (!Array.isArray(node._$child))
+                node._$child = [];
             for (let child of contentNode._$child) {
                 if (viewNode != contentNode) {
                     child.x += viewNode.x - (viewNode.anchorX ?? 0) * viewNode.width;
@@ -1138,5 +1214,22 @@ export function colorToLayaColor(color: any): any {
         b: color.b / 255,
         a: color.a / 255
     };
+}
+
+function convertTransformFromCocos(value: { x: number, y: number, z: number }) {
+    if (!value)
+        return { x: 0, y: 0, z: 0 };
+    return { x: value.x, y: value.y, z: value.z };
+}
+function convertScaleFromCocos(value: { x: number, y: number, z: number }) {
+    if (!value)
+        return { x: 1, y: 1, z: 1 };
+    return { x: value.x, y: value.y, z: value.z };
+}
+
+function convertQuaternionFromCocos(value: { x: number, y: number, z: number, w: number }) {
+    if (!value)
+        return { x: 0, y: 0, z: 0, w: 1 };
+    return { x: value.x, y: value.y, z: value.z, w: value.w };
 }
 

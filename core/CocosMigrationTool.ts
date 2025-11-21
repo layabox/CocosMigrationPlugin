@@ -80,7 +80,8 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         }
 
         if (internalAssetsFolder && tasks.findIndex(t => t.sourceFolder == internalAssetsFolder) === -1) {
-            tasks = tasks.concat({ sourceFolder: internalAssetsFolder });
+            //console.warn("临时去掉内部资源迁移");
+            tasks = tasks.concat({ sourceFolder: internalAssetsFolder, targetFolder: EditorEnv.assetsPath + "/cc-internal" });
         }
 
         let tmpFolders: Array<string> = [];
@@ -193,6 +194,30 @@ export class CocosMigrationTool implements ICocosMigrationTool {
 
             let subMetas: Array<any> = Object.values(meta.subMetas || {});
             for (let subMeta of subMetas) {
+                let subName = subMeta.name;
+                const ext = fpath.extname(subName);
+                subName = subName.substring(0, subName.length - ext.length);
+                switch (ext) {
+                    case ".animation":
+                        subName += ".lani";
+                        break;
+                    case ".material":
+                        subName += ".lmat";
+                        break;
+                    case ".mesh":
+                        subName += ".lm";
+                        break;
+                    case ".scene":
+                        subName += ".ls";
+                        break;
+                    case ".prefab":
+                        subName += ".lh";
+                        break;
+                    default:
+                        console.warn("Unknown sub-asset name: " + subName);
+                        break;
+                }
+                subMeta.userData.__layaSubName = subName;
                 this.allAssets.set(subMeta.uuid, { sourcePath, userData: subMeta.userData });
             }
         }

@@ -3,6 +3,8 @@ import { ICocosAssetConversion, ICocosMigrationTool } from "./ICocosMigrationToo
 import { ImageConversion } from "./assets/ImageConversion";
 import { PrefabConversion } from "./PrefabConversion"
 import { MaterialConversion } from "./assets/MaterialConversion";
+import { AnimGraphConversion } from "./assets/AnimGraphConversion";
+import { ShaderConversion } from "./assets/ShaderConversion";
 
 
 /**
@@ -24,7 +26,15 @@ export var ConversionRegistry: Array<{ exts: Array<string>, type: new (owner: IC
         type: PrefabConversion
     },
     {
+        exts: ["effect"],
+        type: ShaderConversion
+    },
+    {
         exts: ["mtl"],
         type: MaterialConversion
     },
+    {
+        exts: ["animgraph"],
+        type: AnimGraphConversion
+    }
 ];
