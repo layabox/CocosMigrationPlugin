@@ -96,8 +96,8 @@ export class ShaderConversion implements ICocosAssetConversion {
             yamlData = yaml.load(effectBody);
             console.log(`[ShaderConversion] Successfully parsed YAML for ${shaderName}.effect`);
         } catch (error: any) {
-            console.error(`[ShaderConversion] Failed to parse YAML: ${error.message}`);
-            console.error(`[ShaderConversion] Error stack: ${error.stack}`);
+            //console.error(`[ShaderConversion] Failed to parse YAML: ${error.message}`);
+            //console.error(`[ShaderConversion] Error stack: ${error.stack}`);
             return;
         }
 
@@ -123,21 +123,21 @@ export class ShaderConversion implements ICocosAssetConversion {
         const collectTechniqueProperties = (technique: Technique): Map<string, string> => {
             const techniqueUniforms = new Map<string, string>();
             const techniqueDefines = new Set<string>();
-            
+
             // 严格只从 technique 的 passes 的 properties 中收集，不从代码中提取
             for (const pass of technique.passes) {
                 if (pass.properties && typeof pass.properties === "object") {
                     extractPropertiesFromYAML(pass.properties, techniqueUniforms, techniqueDefines);
                 }
             }
-            
+
             return techniqueUniforms;
         };
-        
+
         // 辅助函数：为单个 technique 建立 variableToUniformMap（严格只从 properties 中读取）
         const buildVariableToUniformMap = (technique: Technique, techniqueUniforms: Map<string, string>): Map<string, string> => {
             const variableToUniformMap = new Map<string, string>();
-            
+
             // 严格只从 technique 的 properties 中收集原始变量名
             for (const pass of technique.passes) {
                 if (pass.properties && typeof pass.properties === "object") {
@@ -154,7 +154,7 @@ export class ShaderConversion implements ICocosAssetConversion {
                     }
                 }
             }
-            
+
             return variableToUniformMap;
         };
 
@@ -169,11 +169,11 @@ export class ShaderConversion implements ICocosAssetConversion {
             const defaultDefines = new Set<string>();
             const defaultVariableMap = new Map<string, string>();
             const shaderContent = composeShader(techniqueShaderName, defaultUniforms, defaultDefines, programs, [], defaultVariableMap);
-            
+
             const basePath = fpath.dirname(targetPath);
             const shaderFileName = `${shaderName}_${defaultTechniqueName}.shader`;
             const shaderPath = fpath.join(basePath, shaderFileName);
-            
+
             await fs.promises.writeFile(shaderPath, shaderContent, "utf8");
             const techniqueUuid = meta?.uuid ? `${meta.uuid}_${defaultTechniqueName}` : undefined;
             await writeMeta(shaderPath + ".meta", techniqueUuid);
@@ -189,7 +189,7 @@ export class ShaderConversion implements ICocosAssetConversion {
                 // 为这个 technique 单独收集 properties（严格只从 Cocos properties 中读取）
                 const techniqueUniforms = collectTechniqueProperties(technique);
                 const techniqueDefines = new Set<string>();
-                
+
                 // 从 technique 的 passes 的 properties 中收集 defines（严格只从 Cocos 数据中读取）
                 for (const pass of technique.passes) {
                     if (pass.properties && typeof pass.properties === "object") {
@@ -203,7 +203,7 @@ export class ShaderConversion implements ICocosAssetConversion {
                         }
                     }
                 }
-                
+
                 // 为这个 technique 建立 variableToUniformMap（严格只从 properties 中读取）
                 const variableToUniformMap = buildVariableToUniformMap(technique, techniqueUniforms);
 
@@ -511,7 +511,7 @@ function extractPropertiesFromYAML(properties: any, result: Map<string, string>,
         const uniformName = ensureUniformName(propertyName);
         if (!result.has(uniformName)) {
             let type: string | null = null;
-            
+
             // 1. 最优先：检查 editor.type（最可靠，不依赖变量名）
             if (prop.editor && typeof prop.editor === "object" && prop.editor.type) {
                 if (prop.editor.type === "color") {
@@ -521,12 +521,12 @@ function extractPropertiesFromYAML(properties: any, result: Map<string, string>,
                 }
                 // 其他 editor.type 可以在这里扩展
             }
-            
+
             // 2. 根据变量名推断（通用规则，不依赖具体名字）
             if (!type) {
                 type = inferUniformType(propertyName, rawValue);
             }
-            
+
             if (type) {
                 result.set(uniformName, type);
             }
@@ -538,7 +538,7 @@ function extractPropertiesFromYAML(properties: any, result: Map<string, string>,
 function extractUniformsFromCode(code: string, uniforms: Map<string, string>): void {
     // 使用简单的字符串查找，不用正则
     let searchIndex = 0;
-    
+
     while (true) {
         const uniformIndex = code.indexOf("uniform", searchIndex);
         if (uniformIndex === -1) break;
@@ -551,7 +551,7 @@ function extractUniformsFromCode(code: string, uniforms: Map<string, string>): v
         }
 
         const uniformLine = code.substring(uniformIndex, endIndex).trim();
-        
+
         // 检查是否是 uniform block（如 uniform Constant { ... }）
         const blockStart = uniformLine.indexOf("{");
         if (blockStart !== -1) {
@@ -565,7 +565,7 @@ function extractUniformsFromCode(code: string, uniforms: Map<string, string>): v
                 if (depth === 0) break;
                 blockEnd++;
             }
-            
+
             if (depth === 0) {
                 const blockBody = code.substring(uniformIndex + blockStart + 1, blockEnd);
                 // 解析 block 中的变量
@@ -636,16 +636,27 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
         const name = match[3];
         // 跳过标准变量，只保留自定义的
         if (name !== "v_position" && name !== "v_texcoord" && name !== "v_color") {
-            varyingVars.push(`    varying ${type} ${name};`);
+            // 如果 v_uv 声明为 vec3 但实际只使用 xy 分量，改为 vec2
+            if (name === "v_uv" && type === "vec3") {
+                // 检查代码中是否只使用了 xy 分量
+                const codeAfter = code.substring(code.indexOf(match[0]) + match[0].length);
+                if (codeAfter.match(/v_uv\.xy/g) && !codeAfter.match(/v_uv\.z/g) && !codeAfter.match(/v_uv\.rgb/g)) {
+                    varyingVars.push(`    varying vec2 ${name};`);
+                } else {
+                    varyingVars.push(`    varying ${type} ${name};`);
+                }
+            } else {
+                varyingVars.push(`    varying ${type} ${name};`);
+            }
         }
     }
-    
+
     // 提取函数体内容（从 vert() 或 frag() 函数中）
     let functionBody = "";
     let originalFunctionBody = ""; // 保存原始函数体，用于提取 tiling/offset 计算
     const vertMatch = code.match(/vec4\s+vert\s*\([^)]*\)\s*\{([\s\S]*?)\}/);
     const fragMatch = code.match(/vec4\s+frag\s*\([^)]*\)\s*\{([\s\S]*?)\}/);
-    
+
     if (isVertex && vertMatch) {
         functionBody = vertMatch[1].trim();
         originalFunctionBody = functionBody; // 保存原始内容
@@ -653,7 +664,7 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
         functionBody = fragMatch[1].trim();
         originalFunctionBody = functionBody; // 保存原始内容
     }
-    
+
     // 处理顶点着色器
     if (isVertex) {
         // 提取自定义逻辑（移除 Cocos 标准代码）
@@ -698,7 +709,7 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
             })
             .join("\n")
             .trim();
-        
+
         // 构建标准的 Laya 顶点着色器结构
         const includes = [
             '#include "Math.glsl";',
@@ -708,32 +719,32 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
             '#include "Sprite3DVertex.glsl";',
             '#include "VertexCommon.glsl";'
         ];
-        
+
         let result = includes.join("\n    ") + "\n\n";
-        
+
         // 添加 varying 变量声明
         if (varyingVars.length > 0) {
             result += varyingVars.join("\n") + "\n\n";
         }
-        
+
         // 检查是否需要 UV 和 COLOR
         const hasUV = code.includes("texCoord") || code.includes("uv") || code.includes("UV");
         const hasColor = code.includes("color") || code.includes("Color");
-        
+
         result += "    void main()\n    {\n";
         result += "        Vertex vertex;\n";
         result += "        getVertexParams(vertex);\n\n";
-        
+
         // 检查是否有自定义的 UV varying（如 v_uv）
         const hasCustomUV = customLogic.includes("v_uv") || code.includes("v_uv");
-        
+
         // 检查是否有 tiling/offset 计算（如 v_uv = ... * Tiling_Offset.xy + Tiling_Offset.zw）
         // 使用原始函数体检查，因为 functionBody 可能已经被处理过
-        const hasTilingOffset = originalFunctionBody.includes("Tiling_Offset") || 
-                                 originalFunctionBody.includes("TilingOffset") || 
-                                 originalFunctionBody.includes("mainTiling_Offset") ||
-                                 originalFunctionBody.match(/v_uv\s*=\s*[^;]*\*[^;]*\+[^;]*/);
-        
+        const hasTilingOffset = originalFunctionBody.includes("Tiling_Offset") ||
+            originalFunctionBody.includes("TilingOffset") ||
+            originalFunctionBody.includes("mainTiling_Offset") ||
+            originalFunctionBody.match(/v_uv\s*=\s*[^;]*\*[^;]*\+[^;]*/);
+
         if (hasUV) {
             // 如果有自定义的 v_uv，使用它；否则使用标准的 v_Texcoord0
             if (hasCustomUV) {
@@ -757,7 +768,7 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
                             // 如果没有映射表，使用默认规则（添加 u_ 前缀）
                             tilingOffsetExpr = tilingOffsetExpr.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match) => {
                                 // 跳过已经是 uniform 的、varying 的、内置变量等
-                                if (match.startsWith("u_") || match.startsWith("v_") || match.startsWith("cc_") || 
+                                if (match.startsWith("u_") || match.startsWith("v_") || match.startsWith("cc_") ||
                                     match === "vertex" || match === "texCoord0" || match === "xy" || match === "zw") {
                                     return match;
                                 }
@@ -780,16 +791,38 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
                 result += "    #endif // UV\n\n";
             }
         }
-        
+
         if (hasColor) {
             result += "    #ifdef COLOR\n";
             result += "        v_VertexColor = vertex.vertexColor;\n";
             result += "    #endif // COLOR\n\n";
         }
-        
+
         // 添加自定义逻辑（如果有且不是空）
         // 但需要过滤掉已经被标准结构处理的代码（如 v_uv = a_texCoord）
         if (customLogic && customLogic.length > 0) {
+            // 替换 uniform block 中的变量名（如 noiseTilingOffset -> u_noiseTilingOffset）
+            if (variableToUniformMap) {
+                const sortedEntries = Array.from(variableToUniformMap.entries()).sort((a, b) => b[0].length - a[0].length);
+                for (const [originalName, uniformName] of sortedEntries) {
+                    const regex = new RegExp(`\\b${originalName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, "g");
+                    customLogic = customLogic.replace(regex, uniformName);
+                }
+            } else {
+                // 如果没有映射表，使用默认规则（添加 u_ 前缀）
+                customLogic = customLogic.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match) => {
+                    // 跳过已经是 uniform 的、varying 的、内置变量等
+                    if (match.startsWith("u_") || match.startsWith("v_") || match.startsWith("cc_") ||
+                        match === "vertex" || match === "texCoord0" || match === "xy" || match === "zw" ||
+                        match === "vec2" || match === "vec3" || match === "vec4" || match === "float" ||
+                        match === "mat4" || match === "texture2D" || match === "gl_Position" ||
+                        match === "getWorldMatrix" || match === "getPositionCS" || match === "remapPositionZ") {
+                        return match;
+                    }
+                    return ensureUniformName(match);
+                });
+            }
+
             // 移除已经被处理的代码行
             let filteredLogic = customLogic
                 .split("\n")
@@ -802,82 +835,114 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
                     if (trimmed.match(/^\s*v_uv\s*=\s*a_texCoord\s*$/)) {
                         return false;
                     }
+                    // 过滤掉重复的 v_uv.xy 赋值（如果前面已经有 v_uv = vertex.texCoord0）
+                    if (trimmed.match(/^\s*v_uv\.xy\s*=\s*vertex\.texCoord0\.xy\s*$/)) {
+                        return false;
+                    }
+                    // 过滤掉 v_uv = vertex.texCoord0 之后的重复赋值
+                    if (trimmed.match(/^\s*v_uv\s*=\s*vertex\.texCoord0\s*$/)) {
+                        return false;
+                    }
+                    // 过滤掉空的 vec4 position 声明
+                    if (trimmed.match(/^\s*vec4\s+position\s*;?\s*$/)) {
+                        return false;
+                    }
                     return true;
                 })
                 .join("\n")
                 .trim();
-            
+
             if (filteredLogic && filteredLogic.length > 0) {
                 // 确保自定义逻辑有正确的缩进
                 const indentedLogic = filteredLogic.split("\n").map(line => "        " + line.trim()).join("\n");
                 result += indentedLogic + "\n\n";
             }
         }
-        
+
         // 标准位置计算
         result += "        mat4 worldMat = getWorldMatrix();\n";
         result += "        vec4 pos = (worldMat * vec4(vertex.positionOS, 1.0));\n";
         result += "        vec3 positionWS = pos.xyz / pos.w;\n";
         result += "        gl_Position = getPositionCS(positionWS);\n";
         result += "        gl_Position = remapPositionZ(gl_Position);\n\n";
-        
+
         // 添加雾效处理
         result += "    #ifdef FOG\n";
         result += "        FogHandle(gl_Position.z);\n";
         result += "    #endif\n";
-        
+
         result += "    }";
-        
+
         return result;
     } else {
         // 处理片段着色器
         // 提取自定义逻辑
         let customLogic = functionBody
             .replace(/\/\/.*$/gm, "") // 移除注释
-            .replace(/CCFragOutput\s*\(/g, "")
             .replace(/texture\s*\(/g, "texture2D(")
             .replace(/uniform\s+\w+\s*\{[^}]*\}\s*;/g, "") // 移除 uniform block 声明（已经在 uniformMap 中定义）
             .trim();
-        
+
+        // 先处理 return CCFragOutput(...) 的情况，在替换变量名之前
+        // 这样可以避免 col 被错误地替换为 u_col
+        customLogic = customLogic.replace(/return\s+CCFragOutput\s*\(\s*([^)]+)\s*\)\s*;/g, (match, returnValue) => {
+            const value = returnValue.trim();
+            // 返回值通常是局部变量（如 col），不应该添加 u_ 前缀
+            return `gl_FragColor = ${value};`;
+        });
+
+        // 提取所有局部变量声明，避免被替换为 uniform
+        const localVars = new Set<string>();
+        const varDeclRegex = /\b(vec2|vec3|vec4|float|int|bool|mat4)\s+([a-zA-Z_][a-zA-Z0-9_]*)\b/g;
+        let varMatch;
+        while ((varMatch = varDeclRegex.exec(customLogic)) !== null) {
+            localVars.add(varMatch[2]);
+        }
+
         // 替换所有 uniform 变量引用为正确的名称（使用动态映射）
         if (variableToUniformMap) {
             // 按长度从长到短排序，避免部分匹配（如 mainTiling_Offset 应该在 Tiling_Offset 之前）
             const sortedEntries = Array.from(variableToUniformMap.entries()).sort((a, b) => b[0].length - a[0].length);
             for (const [originalName, uniformName] of sortedEntries) {
+                // 跳过局部变量，不应该被替换
+                if (localVars.has(originalName)) {
+                    continue;
+                }
                 // 使用单词边界匹配，避免部分匹配
                 const regex = new RegExp(`\\b${originalName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, "g");
                 customLogic = customLogic.replace(regex, uniformName);
             }
         } else {
             // 如果没有映射表，使用默认规则（添加 u_ 前缀，但排除已有前缀的）
+            // 注意：需要排除局部变量（如 col, finalColor, texColor 等）
             customLogic = customLogic.replace(/\b([a-zA-Z_][a-zA-Z0-9_]*)\b/g, (match) => {
                 // 跳过已经是 uniform 的（u_ 开头）、varying 的（v_ 开头）、内置变量（cc_ 开头）等
-                if (match.startsWith("u_") || match.startsWith("v_") || match.startsWith("cc_") || 
+                if (match.startsWith("u_") || match.startsWith("v_") || match.startsWith("cc_") ||
                     match === "texture2D" || match === "vec2" || match === "vec3" || match === "vec4" ||
                     match === "float" || match === "int" || match === "bool" || match === "mat4" ||
                     match === "gl_FragColor" || match === "gl_Position" || match === "vertex" ||
-                    match === "finalColor" || match === "texColor") {
+                    match === "finalColor" || match === "texColor" || match === "col" ||
+                    localVars.has(match)) {
                     return match;
                 }
                 // 其他变量名，添加 u_ 前缀
                 return ensureUniformName(match);
             });
         }
-        
-        // 处理 return 语句
+
+        // 清理多余的右括号（可能来自 CCFragOutput 转换）
+        customLogic = customLogic.replace(/gl_FragColor\s*=\s*([^;)]+)\)\s*;/g, (match, value) => {
+            return `gl_FragColor = ${value.trim()};`;
+        });
+
+        // 处理普通的 return 语句（如果还有的话）
         const returnMatch = customLogic.match(/return\s+([^;]+)\s*;/);
         if (returnMatch) {
             const returnValue = returnMatch[1].trim();
-            // 如果返回值是 uniform 变量，需要加上 u_ 前缀（如果还没有）
-            let finalValue = returnValue;
-            if (!finalValue.startsWith("u_") && !finalValue.startsWith("cc_") && !finalValue.startsWith("v_")) {
-                // 检查是否是已知的 uniform 名称
-                const uniformName = ensureUniformName(finalValue);
-                finalValue = uniformName;
-            }
-            customLogic = customLogic.replace(/return\s+([^;]+)\s*;/g, `gl_FragColor = ${finalValue};`);
+            // 返回值通常是局部变量，不应该添加 u_ 前缀
+            customLogic = customLogic.replace(/return\s+([^;]+)\s*;/g, `gl_FragColor = $1;`);
         }
-        
+
         // 构建标准的 Laya 片段着色器结构
         const includes = [
             '#include "Color.glsl";',
@@ -886,9 +951,14 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
             '#include "Camera.glsl";',
             '#include "Sprite3DFrag.glsl";'
         ];
-        
+
+        // 如果代码中使用了 cc_ambientSky 或 diffuseIrradiance，添加 globalIllumination.glsl
+        if (code.includes("cc_ambientSky") || code.includes("diffuseIrradiance") || code.includes("DAY_AND_NIGHT")) {
+            includes.push('#include "globalIllumination.glsl";');
+        }
+
         let result = includes.join("\n    ") + "\n\n";
-        
+
         // 添加 varying 变量声明（标准变量）
         // 只有在真正使用 v_Texcoord0 时才声明（如果使用自定义的 v_uv，则不需要）
         const usesStandardUV = code.includes("v_Texcoord0") && !code.includes("v_uv");
@@ -898,34 +968,54 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
         if (code.includes("v_Color") || code.includes("vertexColor")) {
             result += "    varying vec4 v_Color;\n\n";
         }
-        
+
         // 添加自定义 varying 变量
         if (varyingVars.length > 0) {
             result += varyingVars.join("\n") + "\n\n";
         }
-        
+
         result += "    void main()\n    {\n";
-        
+
         // 添加自定义逻辑
         if (customLogic && customLogic.length > 0) {
             // 替换 u_finalColor 为 finalColor（如果存在）
             customLogic = customLogic.replace(/u_finalColor/g, "finalColor");
-            
+
+            // 替换 Cocos 的环境光变量为 Laya 的格式
+            // cc_ambientSky 需要替换为 diffuseIrradiance(normalWS)，但这里我们使用默认法线
+            customLogic = customLogic.replace(/cc_ambientSky/g, "diffuseIrradiance(vec3(0.0, 1.0, 0.0))");
+
+            // 替换 LinearToSRGB 为 Laya 的格式（如果存在）
+            customLogic = customLogic.replace(/LinearToSRGB\s*\(/g, "linearToGamma(");
+
+            // 清理空行和多余的空白
+            customLogic = customLogic
+                .split("\n")
+                .map(line => line.trim())
+                .filter(line => line.length > 0) // 移除空行
+                .join("\n");
+
             // 确保自定义逻辑有正确的缩进
-            const indentedLogic = customLogic.split("\n").map(line => "        " + line.trim()).join("\n");
+            const indentedLogic = customLogic.split("\n").map(line => "        " + line).join("\n");
             result += indentedLogic + "\n";
         } else {
             // 默认颜色
             result += "        gl_FragColor = vec4(1.0, 1.0, 1.0, 1.0);\n";
         }
-        
-        // 确保有 outputTransform
-        if (!result.includes("outputTransform")) {
+
+        // 确保有 outputTransform（如果没有在自定义逻辑中）
+        // 检查 customLogic 中是否已经有 outputTransform 调用
+        const hasOutputTransform = customLogic && (
+            customLogic.includes("outputTransform") ||
+            customLogic.match(/gl_FragColor\s*=\s*outputTransform\s*\(/g)
+        );
+
+        if (!hasOutputTransform) {
             result += "\n        gl_FragColor = outputTransform(gl_FragColor);\n";
         }
-        
+
         result += "    }";
-        
+
         return result;
     }
 }
@@ -1083,10 +1173,10 @@ function collectDefinesFromCode(source: string, collector: Set<string>): void {
         const ifndefIndex = source.indexOf("#ifndef", searchIndex);
         const ifIndex = source.indexOf("#if", searchIndex);
         const elifIndex = source.indexOf("#elif", searchIndex);
-        
+
         let nextIndex = -1;
         let macroStart = -1;
-        
+
         if (ifdefIndex !== -1 && (nextIndex === -1 || ifdefIndex < nextIndex)) {
             nextIndex = ifdefIndex;
             macroStart = ifdefIndex + 6;
@@ -1103,37 +1193,37 @@ function collectDefinesFromCode(source: string, collector: Set<string>): void {
             nextIndex = elifIndex;
             macroStart = elifIndex + 5;
         }
-        
+
         if (nextIndex === -1) break;
-        
+
         // 跳过空白字符
         while (macroStart < source.length && /\s/.test(source[macroStart])) {
             macroStart++;
         }
-        
+
         // 提取宏名称
         let macroEnd = macroStart;
         while (macroEnd < source.length && /[A-Za-z0-9_]/.test(source[macroEnd])) {
             macroEnd++;
         }
-        
+
         if (macroEnd > macroStart) {
             const macroName = source.substring(macroStart, macroEnd);
             collector.add(macroName);
         }
-        
+
         searchIndex = nextIndex + 1;
     }
 }
 
 function inferUniformType(name: string, rawValue?: string): string | null {
     const nameLower = name.toLowerCase();
-    
+
     // 1. 根据变量名推断（通用规则，不依赖具体名字）
     if (nameLower.endsWith("texture") || nameLower.endsWith("tex")) {
         return "Texture2D";
     }
-    
+
     // 如果变量名包含 "color"，且值是 4 元素数组，推断为 Color（而不是 Vector4）
     // 但如果没有值，默认推断为 Vector4（因为可能是其他用途的 vec4）
     if (nameLower.includes("color")) {
@@ -1149,11 +1239,11 @@ function inferUniformType(name: string, rawValue?: string): string | null {
         // 如果没有值或值不是 4 元素数组，默认推断为 Vector4（保持兼容性）
         return "Vector4";
     }
-    
+
     if (nameLower.includes("mask")) {
         return "Vector4";
     }
-    
+
     if (nameLower.includes("offset") || nameLower.includes("tiling")) {
         return "Vector4";
     }

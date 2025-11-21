@@ -3,6 +3,13 @@ import path from "path";
 import { ICocosAssetConversion, ICocosMigrationTool } from "../ICocosMigrationTool";
 import { formatUuid } from "../Utils";
 
+/**
+ * 开关：是否将所有自定义 shader 强制转换为 Laya 内置的 Unlit shader
+ * - true: 所有自定义 shader 都转换为 Unlit（演示时使用，确保不报错）
+ * - false: 使用正常的转换逻辑（开发测试时使用）
+ */
+const FORCE_UNLIT_FOR_CUSTOM_SHADERS = true;
+
 export class MaterialConversion implements ICocosAssetConversion {
     private _currentTargetPath: string = "";
     
@@ -344,10 +351,18 @@ export class MaterialConversion implements ICocosAssetConversion {
         for (const candidate of effectCandidates) {
             const builtin = builtinShaderMap[candidate.normalized];
             if (builtin) {
+                // 如果是内置 shader，直接返回，不受开关影响
                 return { type: builtin, source: candidate.raw };
             }
         }
 
+        // 如果开关打开，所有自定义 shader 都强制转换为 Unlit
+        if (FORCE_UNLIT_FOR_CUSTOM_SHADERS) {
+            console.log(`[MaterialConversion] Force converting custom shader to Unlit (FORCE_UNLIT_FOR_CUSTOM_SHADERS = true)`);
+            return { type: "Unlit" };
+        }
+
+        // 正常转换逻辑（开关关闭时）
         if (effectCandidates.length > 0) {
             const first = effectCandidates[0];
             let shaderName = this.toLayaTypeName(first.raw);
