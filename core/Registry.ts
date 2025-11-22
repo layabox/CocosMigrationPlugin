@@ -5,6 +5,7 @@ import { PrefabConversion } from "./PrefabConversion"
 import { MaterialConversion } from "./assets/MaterialConversion";
 import { AnimGraphConversion } from "./assets/AnimGraphConversion";
 import { ShaderConversion } from "./assets/ShaderConversion";
+import { AnimationClipConversion } from "./assets/AnimationClipConversion";
 
 
 /**
@@ -36,5 +37,9 @@ export var ConversionRegistry: Array<{ exts: Array<string>, type: new (owner: IC
     {
         exts: ["animgraph"],
         type: AnimGraphConversion
+    },
+    {
+        exts: ["anim"],
+        type: AnimationClipConversion
     }
 ];

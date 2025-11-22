@@ -2,8 +2,6 @@ import { registerComponentParser } from "../ComponentParserRegistry";
 import { formatUuid } from "../Utils";
 
 registerComponentParser("cc.Animation", ({ owner, node, data }) => {
-    //TODO：还有bug，临时注释掉
-    return;
     if (!data)
         return;
 
