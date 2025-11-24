@@ -1,5 +1,6 @@
 import { registerComponentParser } from "../ComponentParserRegistry";
 import { formatUuid } from "../Utils";
+import { ensureCompoundColliderShape } from "./CompoundColliderHelper";
 
 registerComponentParser("cc.MeshCollider", ({ owner, node, data }) => {
     if (!data)
@@ -72,7 +73,8 @@ registerComponentParser("cc.MeshCollider", ({ owner, node, data }) => {
     }
 
     // 设置 colliderShape
-    physicsComponent.colliderShape = colliderShape;
+    // 如果已经有 colliderShape，说明有多个碰撞器，需要创建 CompoundColliderShape
+    ensureCompoundColliderShape(physicsComponent, colliderShape);
 
     // 转换碰撞组（如果有）
     if (typeof data._group === "number") {
