@@ -11,6 +11,7 @@ import "./core/components/CylinderColliderConversion";
 import "./core/components/MeshColliderConversion";
 import "./core/components/SphereColliderConversion";
 import "./core/components/RigidBodyConversion";
+import "./core/components/LineConversion";
 
 @IEditorEnv.regClass()
 export class CocosImportMain {
