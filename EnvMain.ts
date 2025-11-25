@@ -1,6 +1,10 @@
 import { CocosMigrationTool } from "./core/CocosMigrationTool";
 import "./core/components/MeshRendererConversion";
 import "./core/components/DirectionLightConversion";
+import "./core/components/PointLightConversion";
+import "./core/components/SpotLightConversion";
+import "./core/components/ReflectionProbeConversion";
+import "./core/components/LODGroupConversion";
 import "./core/components/CameraConversion";
 import "./core/components/SkinnedMeshRendererConversion";
 import "./core/components/AnimationConversion";
