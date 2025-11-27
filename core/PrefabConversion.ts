@@ -1,5 +1,6 @@
 import { ICocosAssetConversion, ICocosMigrationTool } from "./ICocosMigrationTool";
 import { getComponentParser, registerComponentParser as registerExternalComponentParser } from "./ComponentParserRegistry";
+import { convertSkyboxToLaya, extractSkyboxInfo, extractAmbientInfo, extractFogInfo, convertAmbientToLaya, convertFogToLaya } from "./components/SkyboxConversion";
 
 export class PrefabConversion implements ICocosAssetConversion {
     /** 允许外部模块注册额外的组件解析器。 */
@@ -18,21 +19,27 @@ export class PrefabConversion implements ICocosAssetConversion {
     // 这样可以确保组件解析器访问任何节点时，所有节点都已完全解析完成
     private pendingComponents: Array<{ node: any, compData: any, parentNode: any }>;
     private finalRootNode: any; // 保存最终保存的根节点引用，用于在 parseAllPendingComponents 中查找最终保存的节点
+    private currentTargetPath: string | undefined; // 保存当前转换的目标路径
 
     constructor(private owner: ICocosMigrationTool) {
     }
 
     async run(sourcePath: string, targetPath: string, meta: any) {
         let elements = await IEditorEnv.utils.readJsonAsync(sourcePath);
+        
+        targetPath = Laya.Utils.replaceFileExtension(targetPath, elements[1]?.__type__ == "cc.Scene" ? "ls" : "lh");
+        this.currentTargetPath = targetPath; // 保存目标路径
+        
         let node = this.parseElements(elements);
-
-        targetPath = Laya.Utils.replaceFileExtension(targetPath, node._$type == "Scene" ? "ls" : "lh");
 
         if (this.overrides.length > 0)
             this.rewriteTasks.set(targetPath, { data: node, overrides: this.overrides, elements, nodeMap: this.nodeMap });
 
         await IEditorEnv.utils.writeJsonAsync(targetPath, node);
         await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", { uuid: meta.uuid });
+        
+        // 写入待处理的天空盒材质文件
+        await this.writePendingSkyboxMaterials();
     }
 
     parseElements(elements: Array<any>): any {
@@ -73,8 +80,32 @@ export class PrefabConversion implements ICocosAssetConversion {
                         n--;
                     }
                 }
-                if (scene3dNode)
+                if (scene3dNode) {
                     children.unshift(scene3dNode);
+                    
+                    // 转换场景全局设置：从场景的 _globals 中提取各种信息
+                    const sceneData = this.elements[1]; // 场景数据通常是第二个元素（索引1）
+                    if (sceneData && sceneData.__type__ === "cc.Scene") {
+                        // 转换 skybox
+                        const skyboxInfo = extractSkyboxInfo(sceneData, this.elements);
+                        if (skyboxInfo) {
+                            // 传递目标场景路径（用于保存材质文件）
+                            convertSkyboxToLaya(skyboxInfo, scene3dNode, this.owner, this.currentTargetPath);
+                        }
+                        
+                        // 转换环境光照 (EnvironmentLighting)
+                        const ambientInfo = extractAmbientInfo(sceneData, this.elements);
+                        if (ambientInfo) {
+                            convertAmbientToLaya(ambientInfo, scene3dNode);
+                        }
+                        
+                        // 转换雾效 (Fog)
+                        const fogInfo = extractFogInfo(sceneData, this.elements);
+                        if (fogInfo) {
+                            convertFogToLaya(fogInfo, scene3dNode);
+                        }
+                    }
+                }
             }
         }
 
@@ -1196,6 +1227,27 @@ export class PrefabConversion implements ICocosAssetConversion {
 
         this._spriteFrameCache.set(uuid, res);
         return res;
+    }
+
+    /**
+     * 写入待处理的天空盒材质文件
+     */
+    private async writePendingSkyboxMaterials() {
+        if (!this.owner._pendingSkyboxMaterials || this.owner._pendingSkyboxMaterials.length === 0) {
+            return;
+        }
+
+        for (let materialInfo of this.owner._pendingSkyboxMaterials) {
+            try {
+                await IEditorEnv.utils.writeJsonAsync(materialInfo.path, materialInfo.data);
+                await IEditorEnv.utils.writeJsonAsync(materialInfo.path + ".meta", { uuid: materialInfo.uuid });
+            } catch (error) {
+                console.error(`Failed to write skybox material file ${materialInfo.path}:`, error);
+            }
+        }
+
+        // 清空待处理列表
+        this.owner._pendingSkyboxMaterials = [];
     }
 }
 
