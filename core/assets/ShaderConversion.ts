@@ -10,27 +10,28 @@ const yaml = require("../../lib/js-yaml.js");
 // 所有变量名通过 ensureUniformName 函数动态转换为 uniform 名称
 // 所有类型通过命名规则和值类型自动推断
 
-// Cocos 到 Laya 的 API 映射
-const COCOS_TO_LAYA_API_MAP: Record<string, string> = {
-    // 顶点着色器
-    "CCVertInput": "getVertexParams",
-    "CCGetWorldMatrix": "getWorldMatrix",
-    "CCGetWorldMatrixFull": "getWorldMatrix",
-    "cc_matViewProj": "getPositionCS",
-    "a_position": "vertex.positionOS",
-    "a_texCoord": "vertex.texCoord0",
-    "a_normal": "vertex.normalOS",
-    "a_color": "vertex.vertexColor",
-    // 片段着色器
-    "CCFragOutput": "outputTransform",
-    "texture(": "texture2D(",
-    "cc_time": "u_Time",
-    "cc_cameraPos": "u_CameraPos",
-    "cc_ambientSky": "diffuseIrradiance",
-    // 输入输出
-    "in ": "varying ",
-    "out ": "varying ",
-};
+// Cocos 到 Laya 的 API 映射（已禁用，保持变量名原样）
+// 用户会根据 Cocos 的 shader 在 Laya 这边做对应的 shader，所以变量名不需要转换
+// const COCOS_TO_LAYA_API_MAP: Record<string, string> = {
+//     // 顶点着色器
+//     "CCVertInput": "getVertexParams",
+//     "CCGetWorldMatrix": "getWorldMatrix",
+//     "CCGetWorldMatrixFull": "getWorldMatrix",
+//     "cc_matViewProj": "getPositionCS",
+//     "a_position": "vertex.positionOS",
+//     "a_texCoord": "vertex.texCoord0",
+//     "a_normal": "vertex.normalOS",
+//     "a_color": "vertex.vertexColor",
+//     // 片段着色器
+//     "CCFragOutput": "outputTransform",
+//     "texture(": "texture2D(",
+//     "cc_time": "u_Time",
+//     "cc_cameraPos": "u_CameraPos",
+//     "cc_ambientSky": "diffuseIrradiance",
+//     // 输入输出
+//     "in ": "varying ",
+//     "out ": "varying ",
+// };
 
 // 渲染状态映射
 const BLEND_FACTOR_MAP: Record<string, string> = {
@@ -158,12 +159,44 @@ export class ShaderConversion implements ICocosAssetConversion {
             return variableToUniformMap;
         };
 
+        // 获取 assets 路径（用于检查 cc-internal/shaders 目录）
+        let assetsPath: string | undefined = undefined;
+        if (typeof EditorEnv !== "undefined" && EditorEnv.assetsPath) {
+            assetsPath = EditorEnv.assetsPath;
+        } else {
+            // 如果无法获取 EditorEnv，尝试从 targetPath 推断
+            let currentPath = targetPath;
+            while (currentPath && !currentPath.endsWith("assets")) {
+                const parent = fpath.dirname(currentPath);
+                if (parent === currentPath) break; // 到达根目录
+                currentPath = parent;
+            }
+            if (currentPath.endsWith("assets")) {
+                assetsPath = currentPath;
+            }
+        }
+
+        // 检查 shader 是否已存在的辅助函数
+        const checkShaderExists = (shaderFileName: string): boolean => {
+            if (!assetsPath) return false;
+            const internalShaderPath = fpath.join(assetsPath, "cc-internal", "shaders", shaderFileName);
+            return fs.existsSync(internalShaderPath);
+        };
+
         // 为每个 technique 生成一个独立的 shader 文件
         // 始终使用 原文件名_technique名称.shader 的格式，即使只有一个 technique
         if (techniques.length === 0) {
             // 如果没有 techniques，生成一个默认的
-            console.log(`[ShaderConversion] No techniques found, generating default shader: ${shaderName}_default.shader`);
             const defaultTechniqueName = "default";
+            const shaderFileName = `${shaderName}_${defaultTechniqueName}.shader`;
+            
+            // 检查是否已存在
+            if (checkShaderExists(shaderFileName)) {
+                console.log(`[ShaderConversion] Shader already exists in cc-internal/shaders, skipping: ${shaderFileName}`);
+                return;
+            }
+
+            console.log(`[ShaderConversion] No techniques found, generating default shader: ${shaderFileName}`);
             const techniqueShaderName = `${shaderName}_${defaultTechniqueName}`;
             const defaultUniforms = new Map<string, string>();
             const defaultDefines = new Set<string>();
@@ -171,7 +204,6 @@ export class ShaderConversion implements ICocosAssetConversion {
             const shaderContent = composeShader(techniqueShaderName, defaultUniforms, defaultDefines, programs, [], defaultVariableMap);
 
             const basePath = fpath.dirname(targetPath);
-            const shaderFileName = `${shaderName}_${defaultTechniqueName}.shader`;
             const shaderPath = fpath.join(basePath, shaderFileName);
 
             await fs.promises.writeFile(shaderPath, shaderContent, "utf8");
@@ -182,8 +214,15 @@ export class ShaderConversion implements ICocosAssetConversion {
             console.log(`[ShaderConversion] Generating ${techniques.length} shader file(s) for ${techniques.length} technique(s)`);
             for (const technique of techniques) {
                 const techniqueName = technique.name || "default";
-                const techniqueShaderName = `${shaderName}_${techniqueName}`;
+                const shaderFileName = `${shaderName}_${techniqueName}.shader`;
 
+                // 检查是否已存在
+                if (checkShaderExists(shaderFileName)) {
+                    console.log(`[ShaderConversion] Shader already exists in cc-internal/shaders, skipping: ${shaderFileName}`);
+                    continue;
+                }
+
+                const techniqueShaderName = `${shaderName}_${techniqueName}`;
                 console.log(`[ShaderConversion] Generating shader for technique: ${techniqueName}`);
 
                 // 为这个 technique 单独收集 properties（严格只从 Cocos properties 中读取）
@@ -212,7 +251,6 @@ export class ShaderConversion implements ICocosAssetConversion {
 
                 // 生成文件路径：原文件名_technique名称.shader
                 const basePath = fpath.dirname(targetPath);
-                const shaderFileName = `${shaderName}_${techniqueName}.shader`;
                 const shaderPath = fpath.join(basePath, shaderFileName);
 
                 console.log(`[ShaderConversion] Writing shader file: ${shaderPath}`);
@@ -1329,16 +1367,9 @@ function inferUniformType(name: string, rawValue?: string): string | null {
 }
 
 function ensureUniformName(name: string): string {
-    // 如果已经有 u_ 前缀，直接返回
-    if (name.startsWith("u_")) {
-        return name;
-    }
-    // 如果已经有 cc_ 前缀（Cocos 内置变量），直接返回
-    if (name.startsWith("cc_")) {
-        return name;
-    }
-    // 其他情况，添加 u_ 前缀
-    return `u_${name}`;
+    // 保持变量名原样，不进行任何转换
+    // 用户会根据 Cocos 的 shader 在 Laya 这边做对应的 shader，所以变量名不需要转换
+    return name;
 }
 
 async function writeMeta(metaPath: string, uuid?: string): Promise<void> {

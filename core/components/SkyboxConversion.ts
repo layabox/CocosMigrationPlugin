@@ -225,23 +225,17 @@ function createSkyboxMaterial(
     const resolvedEnvmapUuid = formatUuid(baseUuid, owner);
 
     // 确定材质类型
-    // Cocos 的 _envLightingType: 0=IBL, 1=Ambient, 2=EnvironmentMap
-    // Laya: SkyPanoramic 用于全景贴图，SkyBox 用于立方体贴图
-    // 根据环境贴图类型判断：如果是 TextureCube 用 SkyBox，如果是 Texture2D 用 SkyPanoramic
-    // 这里默认使用 SkyPanoramic（因为用户提供的示例是 SkyPanoramic）
-    const envLightingType = skyboxInfo._envLightingType ?? skyboxInfo.envLightingType ?? 0;
-    // 0=IBL 通常使用 SkyPanoramic，2=EnvironmentMap 可能使用 SkyBox
-    const materialType = envLightingType === 2 ? "SkyBox" : "SkyPanoramic";
+    // 使用 sky_opaque shader（基于 SkyPanoramic 逻辑，支持 Texture2D 全景图）
+    const materialType = "sky_opaque";
     
     // 使用固定的 UUID（每次转换都使用相同的 UUID）
-    const materialUuid = materialType === "SkyBox" 
-        ? SKYBOX_MATERIAL_UUID_SKY_BOX 
-        : SKYBOX_MATERIAL_UUID_SKY_PANORAMIC;
+    const materialUuid = SKYBOX_MATERIAL_UUID_SKY_PANORAMIC;
 
     // 获取旋转角度
     const rotationAngle = skyboxInfo._rotationAngle ?? skyboxInfo.rotationAngle ?? 0;
 
     // 创建材质数据
+    // 渲染状态参考 SkyPanoramicShaderInit.ts
     const materialData: any = {
         version: "LAYAMATERIAL:04",
         props: {
@@ -249,7 +243,7 @@ function createSkyboxMaterial(
             type: materialType,
             renderQueue: 2000,
             materialRenderMode: 0,
-            s_Cull: 2,
+            s_Cull: 2, // CullMode.Back
             s_Blend: 0,
             s_BlendSrc: 0,
             s_BlendDst: 0,
@@ -260,50 +254,29 @@ function createSkyboxMaterial(
             s_BlendEquation: 0,
             s_BlendEquationRGB: 0,
             s_BlendEquationAlpha: 0,
-            s_DepthTest: 1,
-            s_DepthWrite: true,
+            s_DepthTest: 1, // DEPTHTEST_LEQUAL
+            s_DepthWrite: false, // 天空盒不应该写入深度
             defines: []
         }
     };
 
-    // 根据材质类型设置不同的属性
-    if (materialType === "SkyPanoramic") {
-        // SkyPanoramic 使用 u_Texture (Texture2D)
-        materialData.props.u_TintColor = [0.5, 0.5, 0.5, 1];
-        materialData.props.u_Exposure = 1;
-        materialData.props.u_Rotation = rotationAngle;
-        
-        // 添加纹理引用（使用环境贴图的 UUID）
-        materialData.props.textures.push({
-            path: `res://${resolvedEnvmapUuid}`, // 使用环境贴图的 UUID
-            constructParams: [1024, 512, 1, false, false, false], // 默认参数，实际应该从贴图获取
-            propertyParams: {
-                filterMode: 1,
-                wrapModeU: 1,
-                wrapModeV: 1,
-                anisoLevel: 4
-            },
-            name: "u_Texture"
-        });
-    } else {
-        // SkyBox 使用 u_CubeTexture (TextureCube)
-        materialData.props.u_TintColor = [0.5, 0.5, 0.5, 1];
-        materialData.props.u_Exposure = 1;
-        materialData.props.u_Rotation = rotationAngle;
-        
-        // 添加立方体贴图引用
-        materialData.props.textures.push({
-            path: `res://${resolvedEnvmapUuid}`, // 使用环境贴图的 UUID
-            constructParams: [1024, 1024, 1, true, false, false], // TextureCube 参数
-            propertyParams: {
-                filterMode: 1,
-                wrapModeU: 0,
-                wrapModeV: 0,
-                anisoLevel: 0
-            },
-            name: "u_CubeTexture"
-        });
-    }
+    // sky_opaque 使用 u_Texture (Texture2D) - 基于 SkyPanoramic 逻辑
+    materialData.props.u_TintColor = [0.5, 0.5, 0.5, 1];
+    materialData.props.u_Exposure = 1.3;
+    materialData.props.u_Rotation = rotationAngle;
+    
+    // 添加纹理引用（使用环境贴图的 UUID）
+    materialData.props.textures.push({
+        path: `res://${resolvedEnvmapUuid}`, // 使用环境贴图的 UUID
+        constructParams: [1024, 512, 1, false, false, false], // 默认参数，实际应该从贴图获取
+        propertyParams: {
+            filterMode: 1,
+            wrapModeU: 1,
+            wrapModeV: 1,
+            anisoLevel: 4
+        },
+        name: "u_Texture"
+    });
 
     // 创建材质文件（保存到 internal 文件夹）
     // 获取 assets 路径（从 EditorEnv 或 owner 中获取）

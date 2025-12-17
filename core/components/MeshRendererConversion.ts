@@ -43,6 +43,17 @@ registerComponentParser("cc.MeshRenderer", ({ owner, node, data }) => {
         };
     }
 
+    // 转换阴影相关属性
+    // Cocos: _shadowCastingMode (0=OFF, 1=ON) -> Laya: castShadow (boolean)
+    if (typeof data._shadowCastingMode === "number") {
+        meshRenderer.castShadow = data._shadowCastingMode !== 0;
+    }
+
+    // Cocos: _shadowReceivingMode (0=OFF, 1=ON) -> Laya: receiveShadow (boolean)
+    if (typeof data._shadowReceivingMode === "number") {
+        meshRenderer.receiveShadow = data._shadowReceivingMode !== 0;
+    }
+
     // 将节点的 scale 除以 100 以匹配 Laya
     // 如果没有 localScale，默认值是 1，需要强制设置成 1/100 = 0.01
     // if (!node.transform) {
