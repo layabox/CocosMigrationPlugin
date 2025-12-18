@@ -62,8 +62,8 @@ registerComponentParser("cc.Animation", ({ owner, node, data, is2d }) => {
     }
 });
 
-registerComponentParser("cc.SkeletalAnimation", ({ owner, node, data }) => {
-    if (!data)
+registerComponentParser("cc.SkeletalAnimation", ({ owner, node, data, is2d }) => {
+    if (!data || is2d)
         return;
 
     if (!Array.isArray(node._$comp))
@@ -123,8 +123,8 @@ registerComponentParser("cc.SkeletalAnimation", ({ owner, node, data }) => {
     }
 });
 
-registerComponentParser("cc.animation.AnimationController", ({ owner, node, data }) => {
-    if (!data)
+registerComponentParser("cc.animation.AnimationController", ({ owner, node, data, is2d }) => {
+    if (!data || is2d)
         return;
 
     if (!Array.isArray(node._$comp))
