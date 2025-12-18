@@ -4,8 +4,8 @@ import path from "path";
 import { registerComponentParser } from "../ComponentParserRegistry";
 import { formatUuid } from "../Utils";
 
-registerComponentParser("cc.SkinnedMeshRenderer", ({ conversion, owner, node, data }) => {
-    if (!data)
+registerComponentParser("cc.SkinnedMeshRenderer", ({ conversion, owner, node, data, is2d }) => {
+    if (!data || is2d)
         return;
 
     if (!Array.isArray(node._$comp))

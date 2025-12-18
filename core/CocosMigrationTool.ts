@@ -9,6 +9,11 @@ export class CocosMigrationTool implements ICocosMigrationTool {
     projectConfig: any;
     cocosProjectRoot: string;
     allAssets: Map<string, { sourcePath: string, userData: any }>;
+    _pendingSkyboxMaterials?: Array<{
+        path: string;
+        data: any;
+        uuid: string;
+    }>;
 
     private _insts: Map<any, any> = new Map();
     private _folders: Set<string>;

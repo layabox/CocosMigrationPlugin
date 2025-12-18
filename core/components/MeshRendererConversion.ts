@@ -1,7 +1,10 @@
 import { registerComponentParser } from "../ComponentParserRegistry";
 import { formatUuid } from "../Utils";
 
-registerComponentParser("cc.MeshRenderer", ({ owner, node, data }) => {
+registerComponentParser("cc.MeshRenderer", ({ owner, node, data, is2d }) => {
+    if (!data || is2d)
+        return;
+
     if (!Array.isArray(node._$comp))
         node._$comp = [];
 

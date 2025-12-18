@@ -1,8 +1,8 @@
 import { registerComponentParser } from "../ComponentParserRegistry";
 import { formatUuid } from "../Utils";
 
-registerComponentParser("cc.Animation", ({ owner, node, data }) => {
-    if (!data)
+registerComponentParser("cc.Animation", ({ owner, node, data, is2d }) => {
+    if (!data || is2d)
         return;
 
     if (!Array.isArray(node._$comp))

@@ -14,6 +14,8 @@ export interface ComponentParserContext {
 
     /** 是否处于 override（Prefab 覆盖）模式。 */
     isOverride: boolean;
+    /** 是否是 2D 模式。 */
+    is2d: boolean;
 }
 
 export type ComponentParser = (context: ComponentParserContext) => boolean | void;
