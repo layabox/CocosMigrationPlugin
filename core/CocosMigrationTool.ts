@@ -88,8 +88,7 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         if (internalAssetsFolder && tasks.findIndex(t => t.sourceFolder == internalAssetsFolder) === -1) {
             tasks = tasks.concat({
                 sourceFolder: internalAssetsFolder,
-                targetFolder: this.getCCInternalPath(),
-                ignoreFiles: new Set(["primitives.fbx"])
+                targetFolder: this.getCCInternalPath()
             });
         }
 
