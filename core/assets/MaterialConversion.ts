@@ -8,7 +8,7 @@ import { formatUuid } from "../Utils";
  * - true: 所有自定义 shader 都转换为 Unlit（演示时使用，确保不报错）
  * - false: 使用正常的转换逻辑（开发测试时使用）
  */
-const FORCE_UNLIT_FOR_CUSTOM_SHADERS = false;
+const FORCE_UNLIT_FOR_CUSTOM_SHADERS = true;
 
 export class MaterialConversion implements ICocosAssetConversion {
     private _currentTargetPath: string = "";
