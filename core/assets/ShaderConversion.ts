@@ -159,28 +159,15 @@ export class ShaderConversion implements ICocosAssetConversion {
             return variableToUniformMap;
         };
 
-        // 获取 assets 路径（用于检查 cc-internal/shaders 目录）
-        let assetsPath: string | undefined = undefined;
-        if (typeof EditorEnv !== "undefined" && EditorEnv.assetsPath) {
-            assetsPath = EditorEnv.assetsPath;
-        } else {
-            // 如果无法获取 EditorEnv，尝试从 targetPath 推断
-            let currentPath = targetPath;
-            while (currentPath && !currentPath.endsWith("assets")) {
-                const parent = fpath.dirname(currentPath);
-                if (parent === currentPath) break; // 到达根目录
-                currentPath = parent;
-            }
-            if (currentPath.endsWith("assets")) {
-                assetsPath = currentPath;
-            }
-        }
+        // 获取插件目录下的 shaders 路径（用于检查预置 shader 是否存在）
+        // 使用相对路径定位：当前文件位于 core/assets/ShaderConversion.ts，shaders 目录在插件根目录下
+        // 即：../../shaders（相对于当前文件）
+        const pluginShadersPath = fpath.resolve(__dirname, "..", "..", "shaders");
 
-        // 检查 shader 是否已存在的辅助函数
+        // 检查 shader 是否已存在的辅助函数（在插件目录下的 shaders 目录中检查）
         const checkShaderExists = (shaderFileName: string): boolean => {
-            if (!assetsPath) return false;
-            const internalShaderPath = fpath.join(assetsPath, "cc-internal", "shaders", shaderFileName);
-            return fs.existsSync(internalShaderPath);
+            const pluginShaderPath = fpath.join(pluginShadersPath, shaderFileName);
+            return fs.existsSync(pluginShaderPath);
         };
 
         // 为每个 technique 生成一个独立的 shader 文件
@@ -192,7 +179,7 @@ export class ShaderConversion implements ICocosAssetConversion {
             
             // 检查是否已存在
             if (checkShaderExists(shaderFileName)) {
-                console.log(`[ShaderConversion] Shader already exists in cc-internal/shaders, skipping: ${shaderFileName}`);
+                console.log(`[ShaderConversion] Shader already exists in CocosMigrationPlugin/shaders, skipping: ${shaderFileName}`);
                 return;
             }
 
@@ -218,7 +205,7 @@ export class ShaderConversion implements ICocosAssetConversion {
 
                 // 检查是否已存在
                 if (checkShaderExists(shaderFileName)) {
-                    console.log(`[ShaderConversion] Shader already exists in cc-internal/shaders, skipping: ${shaderFileName}`);
+                    console.log(`[ShaderConversion] Shader already exists in CocosMigrationPlugin/shaders, skipping: ${shaderFileName}`);
                     continue;
                 }
 

@@ -12,7 +12,7 @@ export class UIMain {
     static async importAssetsTest() {
         //let sourceFolder = "C:/Users/WIN11/CocosEmpty3D/assets";
         //let sourceFolder = "C:/Users/WIN11/CocosEmpty3D2/assets";
-        // let sourceFolder = "C:/Users/WIN11/Documents/allProject/cocosProject/empty3d/NewProject/assets";
+        //let sourceFolder = "C:/Users/WIN11/Documents/allProject/cocosProject/empty3d/NewProject/assets";
         let sourceFolder = "C:/Users/WIN11/Documents/allProject/cocosProject/ui/assets";
 
         //let sourceFolder = "C:/Users/WIN11/CocosHelloWorld/assets";
