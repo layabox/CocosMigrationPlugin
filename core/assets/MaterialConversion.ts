@@ -35,7 +35,7 @@ export class MaterialConversion implements ICocosAssetConversion {
             // 写入 meta 文件
             await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", { uuid: meta.uuid });
 
-            //console.log(`Material converted: ${sourcePath} -> ${targetPath}`);
+            //console.debug(`Material converted: ${sourcePath} -> ${targetPath}`);
         } catch (error) {
             console.error(`Failed to convert material ${sourcePath}:`, error);
             // 如果转换失败，至少复制原文件
@@ -90,13 +90,13 @@ export class MaterialConversion implements ICocosAssetConversion {
 
         // 如果没有 blendState 或者缺少 blend 因子，尝试从 effect 文件读取
         if (!hasBlendState || !hasBlendFactors) {
-            console.log(`[MaterialConversion] Material states missing blend state info (s_Blend: ${materialProps.s_Blend}, s_BlendSrc: ${materialProps.s_BlendSrc}, s_BlendDst: ${materialProps.s_BlendDst}), trying to read from effect file...`);
+            console.debug(`[MaterialConversion] Material states missing blend state info (s_Blend: ${materialProps.s_Blend}, s_BlendSrc: ${materialProps.s_BlendSrc}, s_BlendDst: ${materialProps.s_BlendDst}), trying to read from effect file...`);
             this.convertRenderStatesFromEffect(layaMaterial, effectUuid, techniqueName);
         } else {
             // 检查是否缺少 alpha blend 信息
             const missingAlphaBlend = hasBlendState && (materialProps.s_BlendSrcAlpha === undefined || materialProps.s_BlendDstAlpha === undefined);
             if (missingAlphaBlend) {
-                console.log(`[MaterialConversion] Material states missing alpha blend info, trying to read from effect file...`);
+                console.debug(`[MaterialConversion] Material states missing alpha blend info, trying to read from effect file...`);
                 this.convertRenderStatesFromEffect(layaMaterial, effectUuid, techniqueName);
             }
         }
@@ -172,18 +172,18 @@ export class MaterialConversion implements ICocosAssetConversion {
         const vectors = new Set<string>();
 
         if (!shaderType) {
-            console.log(`[MaterialConversion] No shader type provided`);
+            console.debug(`[MaterialConversion] No shader type provided`);
             return { all, textures, colors, vectors };
         }
 
         // 查找 shader 文件
         const shaderAsset = this.findShaderAsset(shaderType);
         if (!shaderAsset?.sourcePath) {
-            console.log(`[MaterialConversion] Shader file not found for type: ${shaderType}`);
+            console.debug(`[MaterialConversion] Shader file not found for type: ${shaderType}`);
             return { all, textures, colors, vectors };
         }
 
-        console.log(`[MaterialConversion] Reading shader uniforms from: ${shaderAsset.sourcePath}`);
+        console.debug(`[MaterialConversion] Reading shader uniforms from: ${shaderAsset.sourcePath}`);
 
         try {
             const shaderContent = fs.readFileSync(shaderAsset.sourcePath, "utf8");
@@ -192,14 +192,14 @@ export class MaterialConversion implements ICocosAssetConversion {
             // 使用更健壮的方法：找到 uniformMap: { 的开始，然后找到匹配的 }
             let uniformMapStart = shaderContent.indexOf("uniformMap:");
             if (uniformMapStart === -1) {
-                console.log(`[MaterialConversion] No uniformMap found in shader file`);
+                console.debug(`[MaterialConversion] No uniformMap found in shader file`);
                 return { all, textures, colors, vectors };
             }
 
             // 找到第一个 {
             let braceStart = shaderContent.indexOf("{", uniformMapStart);
             if (braceStart === -1) {
-                console.log(`[MaterialConversion] No opening brace found for uniformMap`);
+                console.debug(`[MaterialConversion] No opening brace found for uniformMap`);
                 return { all, textures, colors, vectors };
             }
 
@@ -214,13 +214,13 @@ export class MaterialConversion implements ICocosAssetConversion {
             }
 
             if (depth !== 0) {
-                console.log(`[MaterialConversion] No matching closing brace found for uniformMap`);
+                console.debug(`[MaterialConversion] No matching closing brace found for uniformMap`);
                 return { all, textures, colors, vectors };
             }
 
             const uniformMapContent = shaderContent.substring(braceStart + 1, i);
 
-            console.log(`[MaterialConversion] Extracted uniformMap content (first 300 chars):`, uniformMapContent.substring(0, 300));
+            console.debug(`[MaterialConversion] Extracted uniformMap content (first 300 chars):`, uniformMapContent.substring(0, 300));
 
             // 解析每个 uniform（格式：u_xxx: { type: Texture2D, ... } 或 u_xxx: { type: Color, ... }）
             // 需要匹配完整的 uniform 定义，包括类型
@@ -243,14 +243,14 @@ export class MaterialConversion implements ICocosAssetConversion {
                         vectors.add(uniformName);
                     }
 
-                    console.log(`[MaterialConversion] Found uniform: ${uniformName} (${uniformType})`);
+                    console.debug(`[MaterialConversion] Found uniform: ${uniformName} (${uniformType})`);
                 }
             }
 
             // 调试：打印解析结果
-            console.log(`[MaterialConversion] Parsed uniformMap content:`, uniformMapContent.substring(0, 200));
+            console.debug(`[MaterialConversion] Parsed uniformMap content:`, uniformMapContent.substring(0, 200));
 
-            console.log(`[MaterialConversion] Total uniforms found: ${all.size} (textures: ${textures.size}, colors: ${colors.size}, vectors: ${vectors.size})`);
+            console.debug(`[MaterialConversion] Total uniforms found: ${all.size} (textures: ${textures.size}, colors: ${colors.size}, vectors: ${vectors.size})`);
         } catch (error) {
             console.warn(`[MaterialConversion] Failed to read shader uniforms from ${shaderAsset.sourcePath}:`, error);
         }
@@ -279,7 +279,7 @@ export class MaterialConversion implements ICocosAssetConversion {
             const shaderPath = path.join(targetDir, `${shaderType}.shader`);
 
             if (fs.existsSync(shaderPath)) {
-                console.log(`[MaterialConversion] Found shader file at target path: ${shaderPath}`);
+                console.debug(`[MaterialConversion] Found shader file at target path: ${shaderPath}`);
                 return { sourcePath: shaderPath };
             }
 
@@ -288,13 +288,13 @@ export class MaterialConversion implements ICocosAssetConversion {
             if (fs.existsSync(shaderDir)) {
                 const shaderPathInDir = path.join(shaderDir, `${shaderType}.shader`);
                 if (fs.existsSync(shaderPathInDir)) {
-                    console.log(`[MaterialConversion] Found shader file in shader directory: ${shaderPathInDir}`);
+                    console.debug(`[MaterialConversion] Found shader file in shader directory: ${shaderPathInDir}`);
                     return { sourcePath: shaderPathInDir };
                 }
             }
         }
 
-        console.log(`[MaterialConversion] Shader file not found for type: ${shaderType}`);
+        console.debug(`[MaterialConversion] Shader file not found for type: ${shaderType}`);
         return null;
     }
 
@@ -431,7 +431,7 @@ export class MaterialConversion implements ICocosAssetConversion {
 
         // 如果开关打开，所有自定义 shader 都强制转换为 Unlit
         if (FORCE_UNLIT_FOR_CUSTOM_SHADERS) {
-            console.log(`[MaterialConversion] Force converting custom shader to Unlit (FORCE_UNLIT_FOR_CUSTOM_SHADERS = true)`);
+            console.debug(`[MaterialConversion] Force converting custom shader to Unlit (FORCE_UNLIT_FOR_CUSTOM_SHADERS = true)`);
             return { type: "Unlit" };
         }
 
@@ -486,18 +486,18 @@ export class MaterialConversion implements ICocosAssetConversion {
             } else {
                 props.s_Cull = cullMode;
             }
-            console.log(`[MaterialConversion] Set s_Cull = ${props.s_Cull} (from cullMode: ${cullMode})`);
+            console.debug(`[MaterialConversion] Set s_Cull = ${props.s_Cull} (from cullMode: ${cullMode})`);
         }
 
         // 混合模式
         if (states.blendState?.targets?.[0]) {
             const blendTarget = states.blendState.targets[0];
-            console.log(`[MaterialConversion] convertRenderStates: blendTarget:`, blendTarget);
+            console.debug(`[MaterialConversion] convertRenderStates: blendTarget:`, blendTarget);
             if (blendTarget.blend) {
                 // 检查是否有分别的 RGB 和 Alpha 设置
                 const hasSeparateBlend = blendTarget.blendSrcAlpha !== undefined || blendTarget.blendDstAlpha !== undefined;
                 props.s_Blend = hasSeparateBlend ? 2 : 1; // 2=BLEND_ENABLE_SEPERATE, 1=BLEND_ENABLE_ALL
-                console.log(`[MaterialConversion] Setting s_Blend = ${props.s_Blend} (hasSeparateBlend: ${hasSeparateBlend})`);
+                console.debug(`[MaterialConversion] Setting s_Blend = ${props.s_Blend} (hasSeparateBlend: ${hasSeparateBlend})`);
 
                 const srcBlend = this.mapBlendFactorToLayaEnum(blendTarget.blendSrc);
                 const dstBlend = this.mapBlendFactorToLayaEnum(blendTarget.blendDst);
@@ -505,7 +505,7 @@ export class MaterialConversion implements ICocosAssetConversion {
                 renderState.dstBlend = dstBlend;
                 props.s_BlendSrc = srcBlend;
                 props.s_BlendDst = dstBlend;
-                console.log(`[MaterialConversion] Set s_BlendSrc = ${srcBlend}, s_BlendDst = ${dstBlend}`);
+                console.debug(`[MaterialConversion] Set s_BlendSrc = ${srcBlend}, s_BlendDst = ${dstBlend}`);
 
                 if (blendTarget.blendSrcAlpha !== undefined && blendTarget.blendDstAlpha !== undefined) {
                     const srcAlpha = this.mapBlendFactorToLayaEnum(blendTarget.blendSrcAlpha);
@@ -514,7 +514,7 @@ export class MaterialConversion implements ICocosAssetConversion {
                     renderState.dstBlendAlpha = dstAlpha;
                     props.s_BlendSrcAlpha = srcAlpha;
                     props.s_BlendDstAlpha = dstAlpha;
-                    console.log(`[MaterialConversion] Set s_BlendSrcAlpha = ${srcAlpha}, s_BlendDstAlpha = ${dstAlpha}`);
+                    console.debug(`[MaterialConversion] Set s_BlendSrcAlpha = ${srcAlpha}, s_BlendDstAlpha = ${dstAlpha}`);
                 } else if (blendTarget.blendSrcAlpha !== undefined || blendTarget.blendDstAlpha !== undefined) {
                     console.warn(`[MaterialConversion] blendSrcAlpha or blendDstAlpha is set but not both, ignoring separate alpha blend`);
                 }
@@ -587,7 +587,7 @@ export class MaterialConversion implements ICocosAssetConversion {
         // 如果通过 UUID 找不到，尝试从 material 的 _cocosEffect 属性获取
         if (!effectName && layaMaterial.props._cocosEffect) {
             effectName = layaMaterial.props._cocosEffect;
-            console.log(`[MaterialConversion] Using effect name from _cocosEffect: ${effectName}`);
+            console.debug(`[MaterialConversion] Using effect name from _cocosEffect: ${effectName}`);
         }
 
         if (!effectName) {
@@ -601,14 +601,14 @@ export class MaterialConversion implements ICocosAssetConversion {
             // 尝试其他可能的位置
             const altPath = path.join(projectRoot, "assets", "resources", "effect", `${effectName}.effect`);
             if (fs.existsSync(altPath)) {
-                console.log(`[MaterialConversion] Found effect file at: ${altPath}`);
+                console.debug(`[MaterialConversion] Found effect file at: ${altPath}`);
                 this.parseBlendStateFromEffectFile(altPath, layaMaterial, techniqueName);
                 return;
             }
             // 尝试在 cankao 目录下查找（用于测试）
             const cankaoPath = path.join(projectRoot, "assets", "cankao", "cocosShader", `${effectName}.effect`);
             if (fs.existsSync(cankaoPath)) {
-                console.log(`[MaterialConversion] Found effect file at: ${cankaoPath}`);
+                console.debug(`[MaterialConversion] Found effect file at: ${cankaoPath}`);
                 this.parseBlendStateFromEffectFile(cankaoPath, layaMaterial, techniqueName);
                 return;
             }
@@ -616,7 +616,7 @@ export class MaterialConversion implements ICocosAssetConversion {
             return;
         }
 
-        console.log(`[MaterialConversion] Found effect file at: ${effectPath}`);
+        console.debug(`[MaterialConversion] Found effect file at: ${effectPath}`);
         this.parseBlendStateFromEffectFile(effectPath, layaMaterial, techniqueName);
     }
 
@@ -672,15 +672,15 @@ export class MaterialConversion implements ICocosAssetConversion {
             // 使用第一个 pass 的 blendState
             if (passesArray.length > 0) {
                 const pass = passesArray[0];
-                console.log(`[MaterialConversion] Parsing pass from effect file: ${effectPath}`);
-                console.log(`[MaterialConversion] Pass blendState:`, JSON.stringify(pass.blendState, null, 2));
-                console.log(`[MaterialConversion] Pass depthStencilState:`, JSON.stringify(pass.depthStencilState, null, 2));
-                console.log(`[MaterialConversion] Pass rasterizerState:`, JSON.stringify(pass.rasterizerState, null, 2));
+                console.debug(`[MaterialConversion] Parsing pass from effect file: ${effectPath}`);
+                console.debug(`[MaterialConversion] Pass blendState:`, JSON.stringify(pass.blendState, null, 2));
+                console.debug(`[MaterialConversion] Pass depthStencilState:`, JSON.stringify(pass.depthStencilState, null, 2));
+                console.debug(`[MaterialConversion] Pass rasterizerState:`, JSON.stringify(pass.rasterizerState, null, 2));
 
                 if (pass.blendState) {
-                    console.log(`[MaterialConversion] Converting blendState...`);
+                    console.debug(`[MaterialConversion] Converting blendState...`);
                     this.convertBlendStateFromYAML(layaMaterial, pass.blendState);
-                    console.log(`[MaterialConversion] After convertBlendStateFromYAML:`, {
+                    console.debug(`[MaterialConversion] After convertBlendStateFromYAML:`, {
                         s_Blend: layaMaterial.props.s_Blend,
                         s_BlendSrc: layaMaterial.props.s_BlendSrc,
                         s_BlendDst: layaMaterial.props.s_BlendDst,
@@ -733,15 +733,15 @@ export class MaterialConversion implements ICocosAssetConversion {
         const props = layaMaterial.props;
         const renderState: any = {};
 
-        console.log(`[MaterialConversion] convertBlendStateFromYAML called with:`, JSON.stringify(blendStateData, null, 2));
+        console.debug(`[MaterialConversion] convertBlendStateFromYAML called with:`, JSON.stringify(blendStateData, null, 2));
 
         // 处理 targets 数组（Cocos 格式）
         if (Array.isArray(blendStateData.targets)) {
             const target = blendStateData.targets[0];
-            console.log(`[MaterialConversion] Blend target from array:`, target);
+            console.debug(`[MaterialConversion] Blend target from array:`, target);
             if (target && typeof target === "object" && target.blend) {
                 props.s_Blend = 1; // BLEND_ENABLE_ALL
-                console.log(`[MaterialConversion] Setting s_Blend = 1 (blend is true)`);
+                console.debug(`[MaterialConversion] Setting s_Blend = 1 (blend is true)`);
 
                 // 映射混合因子（字符串到 Laya 枚举索引）
                 // Laya BlendFactor 枚举: 0=Zero, 1=One, 2=SourceColor, 3=OneMinusSourceColor,
@@ -796,7 +796,7 @@ export class MaterialConversion implements ICocosAssetConversion {
                     props.s_BlendEquation = 0; // Add
                 }
 
-                console.log(`[MaterialConversion] Converted blend state:`, {
+                console.debug(`[MaterialConversion] Converted blend state:`, {
                     s_Blend: props.s_Blend,
                     s_BlendSrc: props.s_BlendSrc,
                     s_BlendDst: props.s_BlendDst,
@@ -877,7 +877,7 @@ export class MaterialConversion implements ICocosAssetConversion {
             } else {
                 props.s_Blend = 1; // BLEND_ENABLE_ALL
             }
-            console.log(`[MaterialConversion] Auto-setting s_Blend to ${props.s_Blend} because blend factors are set`);
+            console.debug(`[MaterialConversion] Auto-setting s_Blend to ${props.s_Blend} because blend factors are set`);
         }
 
         const finalBlend = props.s_Blend ?? s_Blend;
@@ -898,7 +898,7 @@ export class MaterialConversion implements ICocosAssetConversion {
                 if (props.s_DepthWrite === undefined) {
                     props.s_DepthWrite = false;
                 }
-                console.log(`[MaterialConversion] Using TRANSPARENT mode for standard alpha blend (src_alpha + one_minus_src_alpha)`);
+                console.debug(`[MaterialConversion] Using TRANSPARENT mode for standard alpha blend (src_alpha + one_minus_src_alpha)`);
                 return;
             } else if (s_BlendSrcAlpha === 6 && s_BlendDstAlpha === 7) {
                 // Alpha 设置与 RGB 相同，也可以使用 TRANSPARENT 模式
@@ -907,7 +907,7 @@ export class MaterialConversion implements ICocosAssetConversion {
                 if (props.s_DepthWrite === undefined) {
                     props.s_DepthWrite = false;
                 }
-                console.log(`[MaterialConversion] Using TRANSPARENT mode for standard alpha blend with matching alpha factors`);
+                console.debug(`[MaterialConversion] Using TRANSPARENT mode for standard alpha blend with matching alpha factors`);
                 return;
             }
         }
@@ -1071,9 +1071,9 @@ export class MaterialConversion implements ICocosAssetConversion {
         const shaderTypeLower = shaderType.toLowerCase();
         const handledKeys = new Set<string>();
 
-        console.log(`[MaterialConversion] Converting material props. Cocos props keys:`, Object.keys(cocosProps || {}));
-        console.log(`[MaterialConversion] Shader type: ${shaderType}`);
-        console.log(`[MaterialConversion] Shader uniform info:`, shaderUniformInfo ? {
+        console.debug(`[MaterialConversion] Converting material props. Cocos props keys:`, Object.keys(cocosProps || {}));
+        console.debug(`[MaterialConversion] Shader type: ${shaderType}`);
+        console.debug(`[MaterialConversion] Shader uniform info:`, shaderUniformInfo ? {
             all: Array.from(shaderUniformInfo.all),
             textures: Array.from(shaderUniformInfo.textures),
             colors: Array.from(shaderUniformInfo.colors),
@@ -1194,7 +1194,7 @@ export class MaterialConversion implements ICocosAssetConversion {
 
             if (defineName) {
                 this.pushDefine(layaProps.defines, defineName);
-                console.log(`[MaterialConversion] Added texture ${name} with define: ${defineName}`);
+                console.debug(`[MaterialConversion] Added texture ${name} with define: ${defineName}`);
             }
         };
 
@@ -1203,7 +1203,7 @@ export class MaterialConversion implements ICocosAssetConversion {
             const uniformName = findUniformByName(cocosPropName, valueType === "texture" ? "texture" : valueType === "color" ? "color" : valueType === "vector" ? "vector" : "any");
 
             if (!uniformName) {
-                console.log(`[MaterialConversion] No uniform found for property: ${cocosPropName}`);
+                console.debug(`[MaterialConversion] No uniform found for property: ${cocosPropName}`);
                 return;
             }
 
@@ -1215,24 +1215,24 @@ export class MaterialConversion implements ICocosAssetConversion {
                 if (valueType === "color" && shaderUniformInfo.colors.size > 0 && !shaderUniformInfo.colors.has(uniformName)) {
                     // 如果 shader 中有颜色 uniform，但当前名称不匹配，使用第一个颜色 uniform
                     const firstColor = Array.from(shaderUniformInfo.colors)[0];
-                    console.log(`[MaterialConversion] Property ${cocosPropName} uniform ${uniformName} not found in shader, using first color uniform: ${firstColor}`);
+                    console.debug(`[MaterialConversion] Property ${cocosPropName} uniform ${uniformName} not found in shader, using first color uniform: ${firstColor}`);
                     setColor(firstColor, value);
                     return;
                 }
                 if (valueType === "texture" && shaderUniformInfo.textures.size > 0 && !shaderUniformInfo.textures.has(uniformName)) {
                     // 如果 shader 中有纹理 uniform，但当前名称不匹配，使用第一个纹理 uniform
                     const firstTexture = Array.from(shaderUniformInfo.textures)[0];
-                    console.log(`[MaterialConversion] Property ${cocosPropName} uniform ${uniformName} not found in shader, using first texture uniform: ${firstTexture}`);
+                    console.debug(`[MaterialConversion] Property ${cocosPropName} uniform ${uniformName} not found in shader, using first texture uniform: ${firstTexture}`);
                     addTexture(firstTexture, value);
                     return;
                 }
                 // 如果 shader 中没有对应类型的 uniform，或者找到了匹配的，继续使用 uniformName
                 if (!shaderUniformInfo.all.has(uniformName)) {
-                    console.log(`[MaterialConversion] Property ${cocosPropName} uniform ${uniformName} not found in shader, but adding anyway (may be custom property)`);
+                    console.debug(`[MaterialConversion] Property ${cocosPropName} uniform ${uniformName} not found in shader, but adding anyway (may be custom property)`);
                 }
             }
 
-            console.log(`[MaterialConversion] Adding property ${cocosPropName} as ${uniformName}`);
+            console.debug(`[MaterialConversion] Adding property ${cocosPropName} as ${uniformName}`);
 
             if (valueType === "texture") {
                 // 不传入 define，让 addTexture 根据 uniform 名称自动生成
@@ -1304,7 +1304,7 @@ export class MaterialConversion implements ICocosAssetConversion {
             if (value === undefined)
                 continue;
 
-            console.log(`[MaterialConversion] Processing property: ${key}`);
+            console.debug(`[MaterialConversion] Processing property: ${key}`);
 
             // 特殊处理：alphaThreshold 和 cutoff 需要设置 alphaTest
             if (key === "alphaThreshold" || key === "cutoff") {

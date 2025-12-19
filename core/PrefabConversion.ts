@@ -621,7 +621,8 @@ export class PrefabConversion implements ICocosAssetConversion {
                     }
                     return node;
                 }
-                else if ((node._$type === "GPanel" || node._$type === "GList") && data._spriteFrame) {
+                else if ((node._$type === "GPanel" || node._$type === "GList"
+                    || node._$type === "GProgressBar" || node._$type === "GSlider") && data._spriteFrame) {
                     let spf = this.getSpriteFrame(data._spriteFrame.__uuid__);
                     if (spf) {
                         node.background = {
@@ -668,8 +669,6 @@ export class PrefabConversion implements ICocosAssetConversion {
                 if (isOverride)
                     break;
 
-                let spriteData = this.findComponent(data, "cc.Sprite");
-                let shape = data._type;
                 let maskNode: any = {
                     "_$id": IEditorEnv.utils.genShortId(),
                     "_$type": "GWidget",
@@ -684,38 +683,10 @@ export class PrefabConversion implements ICocosAssetConversion {
                         }
                     ]
                 };
-                if (shape == 1) {
-                    maskNode.background = {
-                        "_$type": "DrawEllipseCmd",
-                        "x": 0.5,
-                        "y": 0.5,
-                        "width": 0.5,
-                        "height": 0.5,
-                        "percent": true,
-                        "lineWidth": 0,
-                        "fillColor": "#ffffff"
-                    };
-                }
-                else if (shape == 3) {
-                    if (spriteData && spriteData._spriteFrame) {
-                        let spf = this.getSpriteFrame(spriteData._spriteFrame.__uuid__);
-                        if (spf) {
-                            maskNode.background = {
-                                "_$type": "DrawTextureCmd",
-                                "texture": {
-                                    "_$uuid": spf.uuid,
-                                    "_$type": "Texture"
-                                }
-                            };
-                        }
-                    }
-                }
-                else {
-                    maskNode.background = {
-                        "_$type": "DrawRectCmd",
-                        "fillColor": "#ffffff"
-                    };
-                }
+
+                let shapeData = this.createShape(this.findComponent(data, "cc.Sprite"));
+                if (shapeData)
+                    maskNode.background = shapeData;
                 // 确保 _$child 存在（可能在 parseNode 中被删除了）
                 if (!Array.isArray(node._$child))
                     node._$child = [];
@@ -788,18 +759,59 @@ export class PrefabConversion implements ICocosAssetConversion {
             }
 
             case "cc.ProgressBar": {
-                //node._$type = "GProgressBar";
-                node._$prefab = "b4521a63-ee87-4b39-8324-d1c29b403467";
-                if (data._barSprite)
-                    this.removeElement(data._barSprite);
+                node._$type = "GProgressBar";
+                node.value = data._progress;
+                node.max = 1;
+                if (data._reverse)
+                    node._reverse = data._reverse;
+                if (data._barSprite) {
+                    let barSpriteId = this.getNodeId(data._barSprite);
+                    this.nodeHooks.push(() => {
+                        let barSprite = this.nodeMap.get(barSpriteId);
+                        if (data._mode === 1)
+                            node._vBar = { "_$ref": barSprite._$id };
+                        else
+                            node._hBar = { "_$ref": barSprite._$id };
+                    });
+                }
                 break;
             }
 
             case "cc.Slider":
-                //node._$type = "GSlider";
-                node._$prefab = "e29cffe9-244a-4df8-a442-8354936e5b72";
-                if (data._handle)
-                    this.removeElement(data._handle);
+                node._$type = "GSlider";
+                node.value = data._progress;
+                node.max = 1;
+                let barSprite: any = {
+                    "_$id": IEditorEnv.utils.genShortId(),
+                    "_$type": "GWidget",
+                    "name": "bar",
+                };
+                node._$child.push(barSprite);
+                if (node._direction === 1) {
+                    barSprite.width = node.width;
+                    barSprite.height = node.height * data._progress;
+                    node._vBar = { "_$ref": barSprite._$id };
+                }
+                else {
+                    barSprite.width = node.width * data._progress;
+                    barSprite.height = node.height;
+                    node._hBar = { "_$ref": barSprite._$id };
+                }
+
+                if (data._handle) {
+                    let handleId = this.getNodeId(data._handle);
+                    this.nodeHooks.push(() => {
+                        let handle = this.nodeMap.get(handleId);
+                        if (!handle.relations)
+                            handle.relations = [];
+                        handle.relations.push({
+                            "_$type": "Relation",
+                            "data": node._direction === 1 ? [12, 0] : [5, 0], //top-bottom or left-right
+                            "target": { "_$ref": barSprite._$id }
+                        });
+                        node._gripButton = { "_$ref": handle._$id };
+                    });
+                }
                 break;
 
             case "cc.EditBox": {
@@ -1143,6 +1155,47 @@ export class PrefabConversion implements ICocosAssetConversion {
                 node.downEffect = 3;
             }
         }
+    }
+
+    private createShape(spriteData: any) {
+        if (!spriteData)
+            return null;
+
+        let shape = spriteData._type;
+        if (shape == 1) {
+            return {
+                "_$type": "DrawEllipseCmd",
+                "x": 0.5,
+                "y": 0.5,
+                "width": 0.5,
+                "height": 0.5,
+                "percent": true,
+                "lineWidth": 0,
+                "fillColor": "#ffffff"
+            };
+        }
+        else if (shape == 3) {
+            if (spriteData && spriteData._spriteFrame) {
+                let spf = this.getSpriteFrame(spriteData._spriteFrame.__uuid__);
+                if (spf) {
+                    return {
+                        "_$type": "DrawTextureCmd",
+                        "texture": {
+                            "_$uuid": spf.uuid,
+                            "_$type": "Texture"
+                        }
+                    };
+                }
+            }
+        }
+        else {
+            return {
+                "_$type": "DrawRectCmd",
+                "fillColor": "#ffffff"
+            };
+        }
+
+        return null;
     }
 
     private _spriteFrameCache: Map<string, any> = new Map();

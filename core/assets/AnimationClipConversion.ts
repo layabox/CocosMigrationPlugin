@@ -108,15 +108,15 @@ export class AnimationClipConversion implements ICocosAssetConversion {
             }
 
             // 转换为 TypeAniData 格式
-            console.log(`[AnimationClipConversion] Root data type: ${rootData?.__type__}`);
-            console.log(`[AnimationClipConversion] Total objects: ${allObjects.length}`);
-            console.log(`[AnimationClipConversion] Tracks count: ${rootData?._tracks?.length || 0}`);
+            console.debug(`[AnimationClipConversion] Root data type: ${rootData?.__type__}`);
+            console.debug(`[AnimationClipConversion] Total objects: ${allObjects.length}`);
+            console.debug(`[AnimationClipConversion] Tracks count: ${rootData?._tracks?.length || 0}`);
             
             const layaAnimData = this.convertToTypeAniData(rootData, allObjects);
 
             // 打印转换后的数据
-            console.log(`[AnimationClipConversion] Converted animation: ${sourcePath}`);
-            console.log(JSON.stringify(layaAnimData, null, 2));
+            console.debug(`[AnimationClipConversion] Converted animation: ${sourcePath}`);
+            console.debug(JSON.stringify(layaAnimData, null, 2));
 
             // 修改目标路径扩展名为 .lani
             targetPath = targetPath.replace(/\.anim$/i, '.lani');
@@ -127,7 +127,7 @@ export class AnimationClipConversion implements ICocosAssetConversion {
             // 写入 meta 文件
             await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", { uuid: meta.uuid });
 
-            console.log(`Animation clip converted: ${sourcePath} -> ${targetPath}`);
+            console.debug(`Animation clip converted: ${sourcePath} -> ${targetPath}`);
         } catch (error) {
             console.error(`Failed to convert animation clip ${sourcePath}:`, error);
             throw error;
@@ -217,13 +217,13 @@ export class AnimationClipConversion implements ICocosAssetConversion {
 
         // 转换 _tracks 为层级结构
         const tracks = cocosData._tracks || [];
-        console.log(`[AnimationClipConversion] Found ${tracks.length} tracks`);
+        console.debug(`[AnimationClipConversion] Found ${tracks.length} tracks`);
         if (Array.isArray(tracks) && tracks.length > 0) {
             // 需要解析引用（__id__ 和 __type__）
             const resolvedTracks = this.resolveReferences(tracks, allObjects);
-            console.log(`[AnimationClipConversion] Resolved ${resolvedTracks.length} tracks`);
+            console.debug(`[AnimationClipConversion] Resolved ${resolvedTracks.length} tracks`);
             if (resolvedTracks.length > 0) {
-                console.log(`[AnimationClipConversion] First track type: ${resolvedTracks[0]?.__type__}`);
+                console.debug(`[AnimationClipConversion] First track type: ${resolvedTracks[0]?.__type__}`);
             }
             aniData.aniData = this.convertTracksToAniLayer(resolvedTracks, allObjects, fps);
         } else {
@@ -299,7 +299,7 @@ export class AnimationClipConversion implements ICocosAssetConversion {
                 console.warn(`[AnimationClipConversion] Track type is ${track.__type__}, expected cc.animation.VectorTrack`);
                 continue;
             }
-            console.log(`[AnimationClipConversion] Processing VectorTrack`);
+            console.debug(`[AnimationClipConversion] Processing VectorTrack`);
 
             // 获取 binding 和 path
             let binding = track._binding;
@@ -355,7 +355,7 @@ export class AnimationClipConversion implements ICocosAssetConversion {
                 continue;
             }
 
-            console.log(`[AnimationClipConversion] Node path: "${nodePath}", Property: "${propertyName}"`);
+            console.debug(`[AnimationClipConversion] Node path: "${nodePath}", Property: "${propertyName}"`);
 
             // 获取 channels（每个 channel 对应一个组件，如 x, y, z）
             let channels = track._channels || [];
