@@ -34,9 +34,6 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         cocosProjectConfig?: any,
         copyUnknownAssets?: boolean
     }) {
-        // 在转换前，复制插件目录下的shaders文件夹到cc-internal下
-        await this.copyShadersFolder();
-
         this.allAssets = new Map();
         this._items = [];
         this._registry = new Map();
@@ -196,73 +193,6 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         }
 
         return fpath.join(assetsPath, "cc-internal");
-    }
-
-    /**
-     * 复制插件目录下的shaders文件夹到cc-internal下
-     */
-    private async copyShadersFolder() {
-        try {
-            // 获取cc-internal路径（使用统一的方法）
-            let ccInternalPath: string;
-            try {
-                ccInternalPath = this.getCCInternalPath();
-            } catch (error) {
-                console.warn("[CocosMigrationTool] 无法获取assets路径，跳过shaders文件夹复制");
-                return;
-            }
-            
-            // 从cc-internal路径推断assets路径
-            const assetsPath = fpath.dirname(ccInternalPath);
-            
-            // 源路径：插件目录下的shaders文件夹
-            const sourceShadersPath = fpath.join(assetsPath, "CocosMigrationPlugin", "shaders");
-            // 目标路径：cc-internal下的shaders文件夹
-            const targetShadersPath = fpath.join(ccInternalPath, "shaders");
-
-            // 检查源文件夹是否存在
-            if (!fs.existsSync(sourceShadersPath)) {
-                console.warn(`[CocosMigrationTool] 源shaders文件夹不存在: ${sourceShadersPath}`);
-                return;
-            }
-
-            // 确保目标文件夹存在
-            if (!fs.existsSync(targetShadersPath)) {
-                await fs.promises.mkdir(targetShadersPath, { recursive: true });
-            }
-
-            // 递归复制文件夹
-            await this.copyDirectory(sourceShadersPath, targetShadersPath);
-            console.log(`[CocosMigrationTool] 成功复制shaders文件夹从 ${sourceShadersPath} 到 ${targetShadersPath}`);
-        } catch (error) {
-            console.error(`[CocosMigrationTool] 复制shaders文件夹时出错:`, error);
-        }
-    }
-
-    /**
-     * 递归复制目录及其所有文件
-     */
-    private async copyDirectory(sourceDir: string, targetDir: string) {
-        // 确保目标目录存在
-        if (!fs.existsSync(targetDir)) {
-            await fs.promises.mkdir(targetDir, { recursive: true });
-        }
-
-        // 读取源目录中的所有条目
-        const entries = await fs.promises.readdir(sourceDir, { withFileTypes: true });
-
-        for (const entry of entries) {
-            const sourcePath = fpath.join(sourceDir, entry.name);
-            const targetPath = fpath.join(targetDir, entry.name);
-
-            if (entry.isDirectory()) {
-                // 如果是目录，递归复制
-                await this.copyDirectory(sourcePath, targetPath);
-            } else {
-                // 如果是文件，直接复制
-                await fs.promises.copyFile(sourcePath, targetPath);
-            }
-        }
     }
 
     private async readDir(sourceFolder: string, targetFolder: string, folderRelativePath: string) {

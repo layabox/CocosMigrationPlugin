@@ -1,7 +1,6 @@
 {
   "uuid": "c12af540-dd65-4ea8-878c-c74dbe0c1027",
   "importer": {
-    "import": true,
     "allowLoadInEditor": true,
     "allowLoadInRuntime": false
   }
