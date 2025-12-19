@@ -1,7 +1,10 @@
 import { registerComponentParser } from "../ComponentParserRegistry";
 import { formatUuid } from "../Utils";
 
-registerComponentParser("cc.MeshRenderer", ({ owner, node, data }) => {
+registerComponentParser("cc.MeshRenderer", ({ owner, node, data, is2d }) => {
+    if (!data || is2d)
+        return;
+
     if (!Array.isArray(node._$comp))
         node._$comp = [];
 
@@ -41,6 +44,17 @@ registerComponentParser("cc.MeshRenderer", ({ owner, node, data }) => {
         meshRenderer.lightmapScaleOffset = {
             "_$type": "Vector4"
         };
+    }
+
+    // 转换阴影相关属性
+    // Cocos: _shadowCastingMode (0=OFF, 1=ON) -> Laya: castShadow (boolean)
+    if (typeof data._shadowCastingMode === "number") {
+        meshRenderer.castShadow = data._shadowCastingMode !== 0;
+    }
+
+    // Cocos: _shadowReceivingMode (0=OFF, 1=ON) -> Laya: receiveShadow (boolean)
+    if (typeof data._shadowReceivingMode === "number") {
+        meshRenderer.receiveShadow = data._shadowReceivingMode !== 0;
     }
 
     // 将节点的 scale 除以 100 以匹配 Laya

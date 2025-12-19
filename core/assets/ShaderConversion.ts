@@ -10,27 +10,28 @@ const yaml = require("../../lib/js-yaml.js");
 // 所有变量名通过 ensureUniformName 函数动态转换为 uniform 名称
 // 所有类型通过命名规则和值类型自动推断
 
-// Cocos 到 Laya 的 API 映射
-const COCOS_TO_LAYA_API_MAP: Record<string, string> = {
-    // 顶点着色器
-    "CCVertInput": "getVertexParams",
-    "CCGetWorldMatrix": "getWorldMatrix",
-    "CCGetWorldMatrixFull": "getWorldMatrix",
-    "cc_matViewProj": "getPositionCS",
-    "a_position": "vertex.positionOS",
-    "a_texCoord": "vertex.texCoord0",
-    "a_normal": "vertex.normalOS",
-    "a_color": "vertex.vertexColor",
-    // 片段着色器
-    "CCFragOutput": "outputTransform",
-    "texture(": "texture2D(",
-    "cc_time": "u_Time",
-    "cc_cameraPos": "u_CameraPos",
-    "cc_ambientSky": "diffuseIrradiance",
-    // 输入输出
-    "in ": "varying ",
-    "out ": "varying ",
-};
+// Cocos 到 Laya 的 API 映射（已禁用，保持变量名原样）
+// 用户会根据 Cocos 的 shader 在 Laya 这边做对应的 shader，所以变量名不需要转换
+// const COCOS_TO_LAYA_API_MAP: Record<string, string> = {
+//     // 顶点着色器
+//     "CCVertInput": "getVertexParams",
+//     "CCGetWorldMatrix": "getWorldMatrix",
+//     "CCGetWorldMatrixFull": "getWorldMatrix",
+//     "cc_matViewProj": "getPositionCS",
+//     "a_position": "vertex.positionOS",
+//     "a_texCoord": "vertex.texCoord0",
+//     "a_normal": "vertex.normalOS",
+//     "a_color": "vertex.vertexColor",
+//     // 片段着色器
+//     "CCFragOutput": "outputTransform",
+//     "texture(": "texture2D(",
+//     "cc_time": "u_Time",
+//     "cc_cameraPos": "u_CameraPos",
+//     "cc_ambientSky": "diffuseIrradiance",
+//     // 输入输出
+//     "in ": "varying ",
+//     "out ": "varying ",
+// };
 
 // 渲染状态映射
 const BLEND_FACTOR_MAP: Record<string, string> = {
@@ -158,12 +159,44 @@ export class ShaderConversion implements ICocosAssetConversion {
             return variableToUniformMap;
         };
 
+        // 获取 assets 路径（用于检查 cc-internal/shaders 目录）
+        let assetsPath: string | undefined = undefined;
+        if (typeof EditorEnv !== "undefined" && EditorEnv.assetsPath) {
+            assetsPath = EditorEnv.assetsPath;
+        } else {
+            // 如果无法获取 EditorEnv，尝试从 targetPath 推断
+            let currentPath = targetPath;
+            while (currentPath && !currentPath.endsWith("assets")) {
+                const parent = fpath.dirname(currentPath);
+                if (parent === currentPath) break; // 到达根目录
+                currentPath = parent;
+            }
+            if (currentPath.endsWith("assets")) {
+                assetsPath = currentPath;
+            }
+        }
+
+        // 检查 shader 是否已存在的辅助函数
+        const checkShaderExists = (shaderFileName: string): boolean => {
+            if (!assetsPath) return false;
+            const internalShaderPath = fpath.join(assetsPath, "cc-internal", "shaders", shaderFileName);
+            return fs.existsSync(internalShaderPath);
+        };
+
         // 为每个 technique 生成一个独立的 shader 文件
         // 始终使用 原文件名_technique名称.shader 的格式，即使只有一个 technique
         if (techniques.length === 0) {
             // 如果没有 techniques，生成一个默认的
-            console.log(`[ShaderConversion] No techniques found, generating default shader: ${shaderName}_default.shader`);
             const defaultTechniqueName = "default";
+            const shaderFileName = `${shaderName}_${defaultTechniqueName}.shader`;
+            
+            // 检查是否已存在
+            if (checkShaderExists(shaderFileName)) {
+                console.log(`[ShaderConversion] Shader already exists in cc-internal/shaders, skipping: ${shaderFileName}`);
+                return;
+            }
+
+            console.log(`[ShaderConversion] No techniques found, generating default shader: ${shaderFileName}`);
             const techniqueShaderName = `${shaderName}_${defaultTechniqueName}`;
             const defaultUniforms = new Map<string, string>();
             const defaultDefines = new Set<string>();
@@ -171,7 +204,6 @@ export class ShaderConversion implements ICocosAssetConversion {
             const shaderContent = composeShader(techniqueShaderName, defaultUniforms, defaultDefines, programs, [], defaultVariableMap);
 
             const basePath = fpath.dirname(targetPath);
-            const shaderFileName = `${shaderName}_${defaultTechniqueName}.shader`;
             const shaderPath = fpath.join(basePath, shaderFileName);
 
             await fs.promises.writeFile(shaderPath, shaderContent, "utf8");
@@ -182,8 +214,15 @@ export class ShaderConversion implements ICocosAssetConversion {
             console.log(`[ShaderConversion] Generating ${techniques.length} shader file(s) for ${techniques.length} technique(s)`);
             for (const technique of techniques) {
                 const techniqueName = technique.name || "default";
-                const techniqueShaderName = `${shaderName}_${techniqueName}`;
+                const shaderFileName = `${shaderName}_${techniqueName}.shader`;
 
+                // 检查是否已存在
+                if (checkShaderExists(shaderFileName)) {
+                    console.log(`[ShaderConversion] Shader already exists in cc-internal/shaders, skipping: ${shaderFileName}`);
+                    continue;
+                }
+
+                const techniqueShaderName = `${shaderName}_${techniqueName}`;
                 console.log(`[ShaderConversion] Generating shader for technique: ${techniqueName}`);
 
                 // 为这个 technique 单独收集 properties（严格只从 Cocos properties 中读取）
@@ -212,7 +251,6 @@ export class ShaderConversion implements ICocosAssetConversion {
 
                 // 生成文件路径：原文件名_technique名称.shader
                 const basePath = fpath.dirname(targetPath);
-                const shaderFileName = `${shaderName}_${techniqueName}.shader`;
                 const shaderPath = fpath.join(basePath, shaderFileName);
 
                 console.log(`[ShaderConversion] Writing shader file: ${shaderPath}`);
@@ -836,11 +874,15 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
                         return false;
                     }
                     // 过滤掉重复的 v_uv.xy 赋值（如果前面已经有 v_uv = vertex.texCoord0）
-                    if (trimmed.match(/^\s*v_uv\.xy\s*=\s*vertex\.texCoord0\.xy\s*$/)) {
+                    // 如果 v_uv 是 vec2，不能使用 v_uv.xy，应该直接使用 v_uv
+                    if (trimmed.match(/^\s*v_uv\.xy\s*=\s*vertex\.texCoord0\.xy\s*$/) ||
+                        trimmed.match(/^\s*v_uv\.xy\s*=\s*a_texCoord\.xy\s*$/)) {
                         return false;
                     }
                     // 过滤掉 v_uv = vertex.texCoord0 之后的重复赋值
-                    if (trimmed.match(/^\s*v_uv\s*=\s*vertex\.texCoord0\s*$/)) {
+                    // 注意：如果已经有 v_uv = vertex.texCoord0，后续的 v_uv = vertex.texCoord0.xy 也是重复的
+                    if (trimmed.match(/^\s*v_uv\s*=\s*vertex\.texCoord0\s*$/) ||
+                        trimmed.match(/^\s*v_uv\s*=\s*vertex\.texCoord0\.xy\s*$/)) {
                         return false;
                     }
                     // 过滤掉空的 vec4 position 声明
@@ -851,6 +893,22 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
                 })
                 .join("\n")
                 .trim();
+            
+            // 如果 v_uv 被声明为 vec2，需要将 v_uv.xy 替换为 v_uv
+            // 检查 varyingVars 中是否有 vec2 v_uv
+            const hasVec2V_uv = varyingVars.some(v => v.includes("varying vec2 v_uv"));
+            if (hasVec2V_uv) {
+                // 将 v_uv.xy 替换为 v_uv（因为 v_uv 已经是 vec2，不需要 .xy）
+                // 使用单词边界匹配，避免误替换
+                filteredLogic = filteredLogic.replace(/\bv_uv\.xy\b/g, "v_uv");
+            }
+            
+            // 同样处理 v_noiseUV（如果它是 vec2）
+            const hasVec2V_noiseUV = varyingVars.some(v => v.includes("varying vec2 v_noiseUV"));
+            if (hasVec2V_noiseUV) {
+                // 将 v_noiseUV.xy 替换为 v_noiseUV
+                filteredLogic = filteredLogic.replace(/\bv_noiseUV\.xy\b/g, "v_noiseUV");
+            }
 
             if (filteredLogic && filteredLogic.length > 0) {
                 // 确保自定义逻辑有正确的缩进
@@ -881,6 +939,8 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
             .replace(/\/\/.*$/gm, "") // 移除注释
             .replace(/texture\s*\(/g, "texture2D(")
             .replace(/uniform\s+\w+\s*\{[^}]*\}\s*;/g, "") // 移除 uniform block 声明（已经在 uniformMap 中定义）
+            // 将 Cocos 的 #if MACRO_NAME 转换为 GLSL 标准的 #ifdef MACRO_NAME
+            .replace(/#if\s+([A-Za-z_][A-Za-z0-9_]*)\s*$/gm, "#ifdef $1")
             .trim();
 
         // 先处理 return CCFragOutput(...) 的情况，在替换变量名之前
@@ -983,10 +1043,36 @@ function convertGLSLCode(code: string, isVertex: boolean, variableToUniformMap?:
 
             // 替换 Cocos 的环境光变量为 Laya 的格式
             // cc_ambientSky 需要替换为 diffuseIrradiance(normalWS)，但这里我们使用默认法线
+            // diffuseIrradiance 返回 vec3，所以需要处理 vec4 ambient = cc_ambientSky 的情况
+            // 先处理 vec4 ambient = cc_ambientSky; 的情况，将其转换为 vec3 ambient = diffuseIrradiance(...);
+            customLogic = customLogic.replace(/vec4\s+ambient\s*=\s*cc_ambientSky\s*;/g, "vec3 ambient = diffuseIrradiance(vec3(0.0, 1.0, 0.0));");
+            // 然后处理其他 cc_ambientSky 的使用（但需要确保不会再次匹配上面的模式）
             customLogic = customLogic.replace(/cc_ambientSky/g, "diffuseIrradiance(vec3(0.0, 1.0, 0.0))");
+            // 修复已经转换后的 vec4 ambient = diffuseIrradiance(...) 的情况
+            customLogic = customLogic.replace(/vec4\s+ambient\s*=\s*diffuseIrradiance\(/g, "vec3 ambient = diffuseIrradiance(");
 
             // 替换 LinearToSRGB 为 Laya 的格式（如果存在）
             customLogic = customLogic.replace(/LinearToSRGB\s*\(/g, "linearToGamma(");
+
+            // 如果 v_uv 被声明为 vec2，需要将 v_uv.xy 替换为 v_uv
+            // 检查 varyingVars 中是否有 vec2 v_uv
+            const hasVec2V_uv = varyingVars.some(v => v.includes("varying vec2 v_uv"));
+            if (hasVec2V_uv) {
+                // 将 v_uv.xy 替换为 v_uv（因为 v_uv 已经是 vec2，不需要 .xy）
+                // 使用单词边界匹配，避免误替换
+                customLogic = customLogic.replace(/\bv_uv\.xy\b/g, "v_uv");
+            }
+            
+            // 同样处理 v_noiseUV（如果它是 vec2）
+            const hasVec2V_noiseUV = varyingVars.some(v => v.includes("varying vec2 v_noiseUV"));
+            if (hasVec2V_noiseUV) {
+                // 将 v_noiseUV.xy 替换为 v_noiseUV
+                customLogic = customLogic.replace(/\bv_noiseUV\.xy\b/g, "v_noiseUV");
+            }
+            
+            // 修复 vec3 ambient 的 .rgb 访问（vec3 不能访问 .rgb，应该直接使用）
+            // 将 ambient.rgb 替换为 ambient（因为 ambient 已经是 vec3）
+            customLogic = customLogic.replace(/\bambient\.rgb\b/g, "ambient");
 
             // 清理空行和多余的空白
             customLogic = customLogic
@@ -1281,16 +1367,9 @@ function inferUniformType(name: string, rawValue?: string): string | null {
 }
 
 function ensureUniformName(name: string): string {
-    // 如果已经有 u_ 前缀，直接返回
-    if (name.startsWith("u_")) {
-        return name;
-    }
-    // 如果已经有 cc_ 前缀（Cocos 内置变量），直接返回
-    if (name.startsWith("cc_")) {
-        return name;
-    }
-    // 其他情况，添加 u_ 前缀
-    return `u_${name}`;
+    // 保持变量名原样，不进行任何转换
+    // 用户会根据 Cocos 的 shader 在 Laya 这边做对应的 shader，所以变量名不需要转换
+    return name;
 }
 
 async function writeMeta(metaPath: string, uuid?: string): Promise<void> {

@@ -1,10 +1,21 @@
 import { CocosMigrationTool } from "./core/CocosMigrationTool";
 import "./core/components/MeshRendererConversion";
 import "./core/components/DirectionLightConversion";
+import "./core/components/PointLightConversion";
+import "./core/components/SpotLightConversion";
+import "./core/components/ReflectionProbeConversion";
+import "./core/components/LODGroupConversion";
 import "./core/components/CameraConversion";
 import "./core/components/SkinnedMeshRendererConversion";
 import "./core/components/AnimationConversion";
 import "./core/components/BoxColliderConversion";
+import "./core/components/CapsuleColliderConversion";
+import "./core/components/ConeColliderConversion";
+import "./core/components/CylinderColliderConversion";
+import "./core/components/MeshColliderConversion";
+import "./core/components/SphereColliderConversion";
+import "./core/components/RigidBodyConversion";
+import "./core/components/LineConversion";
 
 @IEditorEnv.regClass()
 export class CocosImportMain {

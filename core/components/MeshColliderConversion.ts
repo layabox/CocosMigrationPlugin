@@ -1,7 +1,8 @@
 import { registerComponentParser } from "../ComponentParserRegistry";
+import { formatUuid } from "../Utils";
 import { ensureCompoundColliderShape } from "./CompoundColliderHelper";
 
-registerComponentParser("cc.BoxCollider", ({ owner, node, data }) => {
+registerComponentParser("cc.MeshCollider", ({ owner, node, data }) => {
     if (!data)
         return;
 
@@ -28,28 +29,28 @@ registerComponentParser("cc.BoxCollider", ({ owner, node, data }) => {
         ? ensureComp("Rigidbody3D")  // 如果有 Rigidbody3D，使用它
         : ensureComp("PhysicsCollider");  // 如果没有，创建 PhysicsCollider
 
-    // 创建 BoxColliderShape
+    // 创建 MeshColliderShape
     const colliderShape: any = {
-        "_$type": "BoxColliderShape"
+        "_$type": "MeshColliderShape"
     };
 
-    // 转换尺寸：直接使用原始值，不进行单位转换
-    const size = data._size || data.size;
-    if (size && typeof size === "object") {
-        colliderShape.size = {
-            "_$type": "Vector3",
-            x: typeof size.x === "number" ? size.x : 1,
-            y: typeof size.y === "number" ? size.y : 1,
-            z: typeof size.z === "number" ? size.z : 1
+    // 转换网格 (mesh)
+    const meshUuid: string | undefined = data._mesh?.__uuid__;
+    if (meshUuid) {
+        const resolved = formatUuid(meshUuid, owner);
+        colliderShape.mesh = {
+            "_$uuid": resolved,
+            "_$type": "Mesh"
         };
+    }
+
+    // 转换凸体属性 (convex)
+    // Cocos 可能使用 _convex 或 _isConvex
+    const convex = data._convex ?? data._isConvex ?? data.convex ?? data.isConvex;
+    if (typeof convex === "boolean") {
+        colliderShape.convex = convex;
     } else {
-        // 默认尺寸
-        colliderShape.size = {
-            "_$type": "Vector3",
-            x: 1,
-            y: 1,
-            z: 1
-        };
+        colliderShape.convex = false; // 默认值
     }
 
     // 转换中心偏移：直接使用原始值，不进行单位转换

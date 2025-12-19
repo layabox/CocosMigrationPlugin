@@ -4,10 +4,27 @@ import path from "path";
 import { registerComponentParser } from "../ComponentParserRegistry";
 import { formatUuid } from "../Utils";
 
-registerComponentParser("cc.SkinnedMeshRenderer", ({ conversion, owner, node, data }) => {
-    if (!data)
+registerComponentParser("cc.SkinnedMeshRenderer", ({ conversion, owner, node, data, is2d }) => {
+    if (!data || is2d)
         return;
 
+    // 使用 hooks 机制延迟执行，确保在所有其他组件解析完成后才执行
+    // nodeHooks 是 PrefabConversion 的私有属性，需要通过类型断言访问
+    const nodeHooks = (conversion as any).nodeHooks;
+    if (!nodeHooks || !Array.isArray(nodeHooks)) {
+        console.warn("conversion.nodeHooks is not available, executing immediately");
+        // 如果 hooks 不可用，直接执行（向后兼容）
+        executeSkinnedMeshRendererConversion(conversion, owner, node, data);
+        return;
+    }
+
+    // 将转换逻辑推入 hooks 数组，在所有节点解析完成后执行
+    nodeHooks.push(() => {
+        executeSkinnedMeshRendererConversion(conversion, owner, node, data);
+    });
+});
+
+function executeSkinnedMeshRendererConversion(conversion: any, owner: any, node: any, data: any): void {
     if (!Array.isArray(node._$comp))
         node._$comp = [];
 
@@ -141,7 +158,7 @@ registerComponentParser("cc.SkinnedMeshRenderer", ({ conversion, owner, node, da
             }
         }
     }
-});
+}
 
 /**
  * 处理 rootBone 的第一个子节点（排除 _bones 中的节点）的 scale

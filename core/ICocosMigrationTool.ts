@@ -18,6 +18,15 @@ export interface ICocosMigrationTool {
     }>;
 
     /**
+     * 待处理的天空盒材质列表
+     */
+    _pendingSkyboxMaterials?: Array<{
+        path: string;
+        data: any;
+        uuid: string;
+    }>;
+
+    /**
      * 执行迁移
      * @param tasks 任务列表
      * - sourceFolder 源文件夹路径
@@ -30,7 +39,7 @@ export interface ICocosMigrationTool {
     run(tasks: ReadonlyArray<{
         sourceFolder: string,
         targetFolder?: string,
-    }>, options: {
+    }>, options?: {
         cocosInternalAssetsFolder?: string,
         cocosProjectConfig?: any,
         copyUnknownAssets?: boolean

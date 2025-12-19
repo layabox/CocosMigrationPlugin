@@ -1,5 +1,6 @@
 import { ICocosAssetConversion, ICocosMigrationTool } from "./ICocosMigrationTool";
 import { getComponentParser, registerComponentParser as registerExternalComponentParser } from "./ComponentParserRegistry";
+import { convertSkyboxToLaya, extractSkyboxInfo, extractAmbientInfo, extractFogInfo, convertAmbientToLaya, convertFogToLaya } from "./components/SkyboxConversion";
 
 export class PrefabConversion implements ICocosAssetConversion {
     /** 允许外部模块注册额外的组件解析器。 */
@@ -14,25 +15,27 @@ export class PrefabConversion implements ICocosAssetConversion {
     private removedElements: Set<number>;
     private elements: Array<any>;
     private inCanvas: number;
-    // 待解析的组件列表：先解析所有节点，再统一解析组件
-    // 这样可以确保组件解析器访问任何节点时，所有节点都已完全解析完成
-    private pendingComponents: Array<{ node: any, compData: any, parentNode: any }>;
-    private finalRootNode: any; // 保存最终保存的根节点引用，用于在 parseAllPendingComponents 中查找最终保存的节点
+    private currentTargetPath: string | undefined; // 保存当前转换的目标路径
 
     constructor(private owner: ICocosMigrationTool) {
     }
 
     async run(sourcePath: string, targetPath: string, meta: any) {
         let elements = await IEditorEnv.utils.readJsonAsync(sourcePath);
-        let node = this.parseElements(elements);
 
-        targetPath = Laya.Utils.replaceFileExtension(targetPath, node._$type == "Scene" ? "ls" : "lh");
+        targetPath = Laya.Utils.replaceFileExtension(targetPath, elements[1]?.__type__ == "cc.Scene" ? "ls" : "lh");
+        this.currentTargetPath = targetPath; // 保存目标路径
+
+        let node = this.parseElements(elements);
 
         if (this.overrides.length > 0)
             this.rewriteTasks.set(targetPath, { data: node, overrides: this.overrides, elements, nodeMap: this.nodeMap });
 
         await IEditorEnv.utils.writeJsonAsync(targetPath, node);
         await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", { uuid: meta.uuid });
+
+        // 写入待处理的天空盒材质文件
+        await this.writePendingSkyboxMaterials();
     }
 
     parseElements(elements: Array<any>): any {
@@ -43,7 +46,6 @@ export class PrefabConversion implements ICocosAssetConversion {
         this.nodeMap = new Map();
         this.removedElements = new Set();
         this.inCanvas = 0;
-        this.pendingComponents = []; // 初始化待解析组件列表
 
         let ccAsset = elements[0];
         //ccAsset.name
@@ -73,8 +75,32 @@ export class PrefabConversion implements ICocosAssetConversion {
                         n--;
                     }
                 }
-                if (scene3dNode)
+                if (scene3dNode) {
                     children.unshift(scene3dNode);
+
+                    // 转换场景全局设置：从场景的 _globals 中提取各种信息
+                    const sceneData = this.elements[1]; // 场景数据通常是第二个元素（索引1）
+                    if (sceneData && sceneData.__type__ === "cc.Scene") {
+                        // 转换 skybox
+                        const skyboxInfo = extractSkyboxInfo(sceneData, this.elements);
+                        if (skyboxInfo) {
+                            // 传递目标场景路径（用于保存材质文件）
+                            convertSkyboxToLaya(skyboxInfo, scene3dNode, this.owner, this.currentTargetPath);
+                        }
+
+                        // 转换环境光照 (EnvironmentLighting)
+                        const ambientInfo = extractAmbientInfo(sceneData, this.elements);
+                        if (ambientInfo) {
+                            convertAmbientToLaya(ambientInfo, scene3dNode);
+                        }
+
+                        // 转换雾效 (Fog)
+                        const fogInfo = extractFogInfo(sceneData, this.elements);
+                        if (fogInfo) {
+                            convertFogToLaya(fogInfo, scene3dNode);
+                        }
+                    }
+                }
             }
         }
 
@@ -86,13 +112,6 @@ export class PrefabConversion implements ICocosAssetConversion {
             }
             i++;
         }
-
-        // 保存最终保存的根节点引用（在 Object.assign 之后）
-        this.finalRootNode = node;
-
-        // 第二阶段：所有节点解析完成后，统一解析所有组件
-        // 这样可以确保组件解析器（如 SkinnedMeshRenderer）在访问子节点时，所有节点都已完全解析完成
-        this.parseAllPendingComponents();
 
         this.nodeHooks.forEach(hook => hook());
 
@@ -106,7 +125,6 @@ export class PrefabConversion implements ICocosAssetConversion {
             this.elements = task.elements;
             this.nodeMap = task.nodeMap;
             this.nodeHooks = [];
-            this.pendingComponents = []; // 初始化待解析组件列表（虽然 complete 中直接解析，但保持一致性）
 
             for (let info of overrides) {
                 let targetInfo = this.overrideTargets.get(info.targetId);
@@ -121,6 +139,8 @@ export class PrefabConversion implements ICocosAssetConversion {
                 let targetId = targetInfo.parentNode ? targetNode._$id : null;
                 let parentNode = targetInfo.parentNode || info.instanceNodeParent;
 
+                let is2d = EditorEnv.typeRegistry.isDerivedOf(targetNode._$type, "Sprite");
+
                 if (info.propertyPath == "_$child") {
                     let entry = this.createOverrideEntry(instanceNode, targetId);
                     if (!entry._$child)
@@ -130,9 +150,9 @@ export class PrefabConversion implements ICocosAssetConversion {
                 else if (info.propertyPath == "_$comp" || compData) {
                     let props: any = { _$type: targetNode._$type, _$child: [], _$comp: [] };
                     if (info.propertyPath == "_$comp")
-                        this.parseComponent(props, info.value);
+                        this.parseComponent(props, info.value, false, is2d);
                     else
-                        this.parseComponent(props, { __type__: compData.__type__, [info.propertyPath[0]]: info.value }, true);
+                        this.parseComponent(props, { __type__: compData.__type__, [info.propertyPath[0]]: info.value }, true, is2d);
                     if (props._$comp.length > 0) {
                         let comp = props._$comp[0];
                         let entry = this.createOverrideEntry(instanceNode, targetId, comp._$type);
@@ -152,7 +172,6 @@ export class PrefabConversion implements ICocosAssetConversion {
                 }
                 else {
                     let props: any = {};
-                    let is2d = EditorEnv.typeRegistry.isDerivedOf(targetNode._$type, "Sprite");
                     this.parseNodeProps(parentNode, props, info.propertyPath[0], info.value, is2d, true);
                     let entry = this.createOverrideEntry(instanceNode, targetId);
                     IEditorEnv.utils.mergeObjs(entry, props, true);
@@ -306,9 +325,7 @@ export class PrefabConversion implements ICocosAssetConversion {
         node._$child = [];
         node._$comp = [];
 
-        // 重要：不在此处解析组件，而是将组件信息记录到待解析列表
-        // 等所有节点（包括子节点）都解析完成后，再统一解析组件
-        // 这样可以确保组件解析器访问任何节点时，所有节点都已完全解析完成
+        // 解析组件
         if (data._components?.length > 0) {
             let spriteData: any;
             for (let idInfo of data._components) {
@@ -323,12 +340,12 @@ export class PrefabConversion implements ICocosAssetConversion {
                     spriteData = compData;
                     continue;
                 }
-                // 将组件添加到待解析列表，而不是立即解析
-                this.pendingComponents.push({ node, compData, parentNode });
+                // 直接解析组件
+                this.parseComponent(node, compData, false, is2d);
             }
-            // cc.Sprite 组件也需要添加到待解析列表，但标记为最后处理
+            // 最后解析 cc.Sprite 组件（保持原有逻辑）
             if (spriteData)
-                this.pendingComponents.push({ node, compData: spriteData, parentNode });
+                this.parseComponent(node, spriteData, false, is2d);
         }
 
         if (data._children?.length > 0) {
@@ -367,53 +384,6 @@ export class PrefabConversion implements ICocosAssetConversion {
         return node;
     }
 
-    /**
-     * 统一解析所有待解析的组件
-     * 在所有节点解析完成后调用，确保组件解析器可以安全访问任何节点
-     */
-    private parseAllPendingComponents(): void {
-        // 通过 _$id 从最终保存的节点树中查找对应的 node
-        // 这样可以确保修改的是最终保存的对象，而不是缓存的引用
-        const findNodeById = (root: any, targetId: string): any => {
-            if (root._$id === targetId) {
-                return root;
-            }
-            if (root._$child) {
-                for (const child of root._$child) {
-                    const found = findNodeById(child, targetId);
-                    if (found) {
-                        return found;
-                    }
-                }
-            }
-            return null;
-        };
-
-        // 先解析非 cc.Sprite 组件
-        for (const { node, compData, parentNode } of this.pendingComponents) {
-            if (compData.__type__ !== "cc.Sprite") {
-                // 从最终保存的节点树中查找对应的 node
-                // Object.assign 是浅拷贝，根节点是新对象，但子节点引用不变
-                // 所以需要通过 _$id 查找根节点，子节点可以直接使用原始引用
-                const targetNode = this.finalRootNode && node._$id === this.finalRootNode._$id 
-                    ? this.finalRootNode 
-                    : (this.finalRootNode ? findNodeById(this.finalRootNode, node._$id) : null) || node;
-                this.parseComponent(targetNode, compData);
-            }
-        }
-        // 最后解析 cc.Sprite 组件（保持原有逻辑）
-        for (const { node, compData, parentNode } of this.pendingComponents) {
-            if (compData.__type__ === "cc.Sprite") {
-                // 从最终保存的节点树中查找对应的 node
-                const targetNode = this.finalRootNode && node._$id === this.finalRootNode._$id 
-                    ? this.finalRootNode 
-                    : (this.finalRootNode ? findNodeById(this.finalRootNode, node._$id) : null) || node;
-                this.parseComponent(targetNode, compData);
-            }
-        }
-        // 清空待解析列表
-        this.pendingComponents = [];
-    }
 
     private parseNodeProps(parentNode: any, node: any, key: string, value: any, is2d: boolean, isOverride?: boolean) {
         switch (key) {
@@ -485,7 +455,7 @@ export class PrefabConversion implements ICocosAssetConversion {
         }
     }
 
-    private parseComponent(node: any, data: any, isOverride?: boolean): void {
+    private parseComponent(node: any, data: any, isOverride?: boolean, is2d?: boolean): void {
         if (!data || !data.__type__)
             return;
 
@@ -497,7 +467,8 @@ export class PrefabConversion implements ICocosAssetConversion {
                 owner: this.owner,
                 node,
                 data,
-                isOverride: !!isOverride
+                isOverride: !!isOverride,
+                is2d: !!is2d
             });
             if (result !== false)
                 return;
@@ -1196,6 +1167,27 @@ export class PrefabConversion implements ICocosAssetConversion {
 
         this._spriteFrameCache.set(uuid, res);
         return res;
+    }
+
+    /**
+     * 写入待处理的天空盒材质文件
+     */
+    private async writePendingSkyboxMaterials() {
+        if (!this.owner._pendingSkyboxMaterials || this.owner._pendingSkyboxMaterials.length === 0) {
+            return;
+        }
+
+        for (let materialInfo of this.owner._pendingSkyboxMaterials) {
+            try {
+                await IEditorEnv.utils.writeJsonAsync(materialInfo.path, materialInfo.data);
+                await IEditorEnv.utils.writeJsonAsync(materialInfo.path + ".meta", { uuid: materialInfo.uuid });
+            } catch (error) {
+                console.error(`Failed to write skybox material file ${materialInfo.path}:`, error);
+            }
+        }
+
+        // 清空待处理列表
+        this.owner._pendingSkyboxMaterials = [];
     }
 }
 
