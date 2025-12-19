@@ -6,33 +6,6 @@ import { ICocosAssetConversion, ICocosMigrationTool } from "../ICocosMigrationTo
 // 直接使用 require 加载 js-yaml
 const yaml = require("../../lib/js-yaml.js");
 
-// 已移除 PROPERTY_TYPE_MAP 和 PROPERTY_UNIFORM_NAME_MAP，改为完全动态推断
-// 所有变量名通过 ensureUniformName 函数动态转换为 uniform 名称
-// 所有类型通过命名规则和值类型自动推断
-
-// Cocos 到 Laya 的 API 映射（已禁用，保持变量名原样）
-// 用户会根据 Cocos 的 shader 在 Laya 这边做对应的 shader，所以变量名不需要转换
-// const COCOS_TO_LAYA_API_MAP: Record<string, string> = {
-//     // 顶点着色器
-//     "CCVertInput": "getVertexParams",
-//     "CCGetWorldMatrix": "getWorldMatrix",
-//     "CCGetWorldMatrixFull": "getWorldMatrix",
-//     "cc_matViewProj": "getPositionCS",
-//     "a_position": "vertex.positionOS",
-//     "a_texCoord": "vertex.texCoord0",
-//     "a_normal": "vertex.normalOS",
-//     "a_color": "vertex.vertexColor",
-//     // 片段着色器
-//     "CCFragOutput": "outputTransform",
-//     "texture(": "texture2D(",
-//     "cc_time": "u_Time",
-//     "cc_cameraPos": "u_CameraPos",
-//     "cc_ambientSky": "diffuseIrradiance",
-//     // 输入输出
-//     "in ": "varying ",
-//     "out ": "varying ",
-// };
-
 // 渲染状态映射
 const BLEND_FACTOR_MAP: Record<string, string> = {
     "src_alpha": "BlendFactor.SourceAlpha",
@@ -95,10 +68,8 @@ export class ShaderConversion implements ICocosAssetConversion {
         let yamlData: any;
         try {
             yamlData = yaml.load(effectBody);
-            console.log(`[ShaderConversion] Successfully parsed YAML for ${shaderName}.effect`);
         } catch (error: any) {
-            //console.error(`[ShaderConversion] Failed to parse YAML: ${error.message}`);
-            //console.error(`[ShaderConversion] Error stack: ${error.stack}`);
+            console.warn(`[ShaderConversion] Failed to parse YAML for ${shaderName}.effect: ${error.message}`);
             return;
         }
 
@@ -109,16 +80,6 @@ export class ShaderConversion implements ICocosAssetConversion {
 
         // 解析 techniques
         const techniques = parseTechniquesFromYAML(yamlData);
-        console.log(`[ShaderConversion] Parsed ${techniques.length} techniques from ${shaderName}.effect`);
-        if (techniques.length > 0) {
-            console.log(`[ShaderConversion] Techniques: ${techniques.map(t => t.name).join(", ")}`);
-            for (const tech of techniques) {
-                console.log(`[ShaderConversion]   - ${tech.name}: ${tech.passes.length} passes`);
-                for (const pass of tech.passes) {
-                    console.log(`[ShaderConversion]     - pass: vert=${pass.vert || "none"}, frag=${pass.frag || "none"}`);
-                }
-            }
-        }
 
         // 辅助函数：为单个 technique 收集 properties（严格只从 Cocos properties 中读取）
         const collectTechniqueProperties = (technique: Technique): Map<string, string> => {
@@ -162,10 +123,16 @@ export class ShaderConversion implements ICocosAssetConversion {
         // 获取插件目录下的 shaders 路径（用于检查预置 shader 是否存在）
         // 使用相对路径定位：当前文件位于 core/assets/ShaderConversion.ts，shaders 目录在插件根目录下
         // 即：../../shaders（相对于当前文件）
-        const pluginShadersPath = fpath.resolve(__dirname, "..", "..", "shaders");
+        const pluginRootPath = fpath.resolve(__dirname, "..", "..");
+        const pluginShadersPath = fpath.join(pluginRootPath, "shaders");
+        const pluginDirName = fpath.basename(pluginRootPath);
 
         // 检查 shader 是否已存在的辅助函数（在插件目录下的 shaders 目录中检查）
         const checkShaderExists = (shaderFileName: string): boolean => {
+            // 如果插件 shaders 目录不存在，返回 false
+            if (!fs.existsSync(pluginShadersPath)) {
+                return false;
+            }
             const pluginShaderPath = fpath.join(pluginShadersPath, shaderFileName);
             return fs.existsSync(pluginShaderPath);
         };
@@ -177,13 +144,11 @@ export class ShaderConversion implements ICocosAssetConversion {
             const defaultTechniqueName = "default";
             const shaderFileName = `${shaderName}_${defaultTechniqueName}.shader`;
             
-            // 检查是否已存在
+            // 检查是否已存在于插件的 shaders 目录
             if (checkShaderExists(shaderFileName)) {
-                console.log(`[ShaderConversion] Shader already exists in CocosMigrationPlugin/shaders, skipping: ${shaderFileName}`);
+                console.log(`[ShaderConversion] Using predefined shader: ${pluginDirName}/shaders/${shaderFileName}`);
                 return;
             }
-
-            console.log(`[ShaderConversion] No techniques found, generating default shader: ${shaderFileName}`);
             const techniqueShaderName = `${shaderName}_${defaultTechniqueName}`;
             const defaultUniforms = new Map<string, string>();
             const defaultDefines = new Set<string>();
@@ -197,29 +162,27 @@ export class ShaderConversion implements ICocosAssetConversion {
             const techniqueUuid = meta?.uuid ? `${meta.uuid}_${defaultTechniqueName}` : undefined;
             await writeMeta(shaderPath + ".meta", techniqueUuid);
         } else {
-            // 为每个 technique 生成独立的文件，始终使用 原文件名_technique名称.shader 格式
-            console.log(`[ShaderConversion] Generating ${techniques.length} shader file(s) for ${techniques.length} technique(s)`);
+            // 为每个 technique 生成独立的文件
             for (const technique of techniques) {
                 const techniqueName = technique.name || "default";
                 const shaderFileName = `${shaderName}_${techniqueName}.shader`;
 
-                // 检查是否已存在
+                // 检查是否已存在于插件的 shaders 目录
                 if (checkShaderExists(shaderFileName)) {
-                    console.log(`[ShaderConversion] Shader already exists in CocosMigrationPlugin/shaders, skipping: ${shaderFileName}`);
+                    console.log(`[ShaderConversion] Using predefined shader: ${pluginDirName}/shaders/${shaderFileName}`);
                     continue;
                 }
 
                 const techniqueShaderName = `${shaderName}_${techniqueName}`;
-                console.log(`[ShaderConversion] Generating shader for technique: ${techniqueName}`);
 
-                // 为这个 technique 单独收集 properties（严格只从 Cocos properties 中读取）
+                // 为这个 technique 单独收集 properties
                 const techniqueUniforms = collectTechniqueProperties(technique);
                 const techniqueDefines = new Set<string>();
 
-                // 从 technique 的 passes 的 properties 中收集 defines（严格只从 Cocos 数据中读取）
+                // 从 technique 的 passes 的 properties 中收集 defines
                 for (const pass of technique.passes) {
                     if (pass.properties && typeof pass.properties === "object") {
-                        for (const [propertyName, propertyData] of Object.entries(pass.properties)) {
+                        for (const [, propertyData] of Object.entries(pass.properties)) {
                             const prop = propertyData as any;
                             if (prop.editor && typeof prop.editor === "object" && prop.editor.parent) {
                                 techniqueDefines.add(prop.editor.parent);
@@ -230,22 +193,20 @@ export class ShaderConversion implements ICocosAssetConversion {
                     }
                 }
 
-                // 为这个 technique 建立 variableToUniformMap（严格只从 properties 中读取）
+                // 为这个 technique 建立 variableToUniformMap
                 const variableToUniformMap = buildVariableToUniformMap(technique, techniqueUniforms);
 
-                // 为这个 technique 生成 shader 内容
+                // 生成 shader 内容
                 const shaderContent = composeShader(techniqueShaderName, techniqueUniforms, techniqueDefines, programs, [technique], variableToUniformMap);
 
-                // 生成文件路径：原文件名_technique名称.shader
+                // 写入文件
                 const basePath = fpath.dirname(targetPath);
                 const shaderPath = fpath.join(basePath, shaderFileName);
 
-                console.log(`[ShaderConversion] Writing shader file: ${shaderPath}`);
-                console.log(`[ShaderConversion] Technique ${techniqueName} uniforms:`, Array.from(techniqueUniforms.keys()));
                 await fs.promises.writeFile(shaderPath, shaderContent, "utf8");
-                console.log(`[ShaderConversion] Successfully created: ${shaderFileName}`);
+                console.log(`[ShaderConversion] Generated: ${shaderFileName}`);
 
-                // 为每个 shader 文件生成 meta
+                // 生成 meta 文件
                 const techniqueUuid = meta?.uuid ? `${meta.uuid}_${techniqueName}` : undefined;
                 await writeMeta(shaderPath + ".meta", techniqueUuid);
             }
@@ -454,45 +415,6 @@ function parseBlendStateFromYAML(blendStateData: any): any {
     return blendState;
 }
 
-// 从 YAML 数据收集所有 properties
-function collectPropertiesFromYAML(yamlData: any, defineCollector: Set<string>): Map<string, string> {
-    const result = new Map<string, string>();
-
-    if (!yamlData || typeof yamlData !== "object") {
-        return result;
-    }
-
-    // 获取 techniques 数组
-    let techniquesArray: any[] = [];
-    if (Array.isArray(yamlData.techniques)) {
-        techniquesArray = yamlData.techniques;
-    } else if (yamlData.techniques && typeof yamlData.techniques === "object") {
-        techniquesArray = [yamlData.techniques];
-    }
-
-    // 遍历所有 techniques 和 passes，收集 properties
-    for (const tech of techniquesArray) {
-        if (!tech || typeof tech !== "object") continue;
-
-        let passesArray: any[] = [];
-        if (Array.isArray(tech.passes)) {
-            passesArray = tech.passes;
-        } else if (tech.passes && typeof tech.passes === "object") {
-            passesArray = [tech.passes];
-        }
-
-        for (const pass of passesArray) {
-            if (!pass || typeof pass !== "object") continue;
-
-            if (pass.properties && typeof pass.properties === "object") {
-                extractPropertiesFromYAML(pass.properties, result, defineCollector);
-            }
-        }
-    }
-
-    return result;
-}
-
 // 从 YAML 对象中提取 properties
 function extractPropertiesFromYAML(properties: any, result: Map<string, string>, defineCollector: Set<string>): void {
     for (const [propertyName, propertyData] of Object.entries(properties)) {
@@ -557,97 +479,6 @@ function extractPropertiesFromYAML(properties: any, result: Map<string, string>,
             }
         }
     }
-}
-
-// 从 GLSL 代码中提取 uniform blocks 中的变量
-function extractUniformsFromCode(code: string, uniforms: Map<string, string>): void {
-    // 使用简单的字符串查找，不用正则
-    let searchIndex = 0;
-
-    while (true) {
-        const uniformIndex = code.indexOf("uniform", searchIndex);
-        if (uniformIndex === -1) break;
-
-        // 查找 uniform 关键字后的内容
-        let endIndex = code.indexOf(";", uniformIndex);
-        if (endIndex === -1) {
-            searchIndex = uniformIndex + 7;
-            continue;
-        }
-
-        const uniformLine = code.substring(uniformIndex, endIndex).trim();
-
-        // 检查是否是 uniform block（如 uniform Constant { ... }）
-        const blockStart = uniformLine.indexOf("{");
-        if (blockStart !== -1) {
-            // 这是一个 uniform block，需要找到对应的 }
-            // 查找匹配的右大括号
-            let blockEnd = uniformIndex + blockStart + 1;
-            let depth = 1;
-            while (blockEnd < code.length && depth > 0) {
-                if (code[blockEnd] === "{") depth++;
-                if (code[blockEnd] === "}") depth--;
-                if (depth === 0) break;
-                blockEnd++;
-            }
-
-            if (depth === 0) {
-                const blockBody = code.substring(uniformIndex + blockStart + 1, blockEnd);
-                // 解析 block 中的变量
-                const vars = blockBody.split(";").filter(v => v.trim());
-                for (const v of vars) {
-                    const trimmed = v.trim();
-                    if (!trimmed) continue;
-                    const parts = trimmed.split(/\s+/).filter(p => p.length > 0);
-                    if (parts.length >= 2) {
-                        const type = parts[0];
-                        const name = parts[1].split(/[,\[]/)[0].trim();
-                        if (name) {
-                            const uniformName = ensureUniformName(name);
-                            const layaType = mapGLSLTypeToLaya(type);
-                            if (layaType && !uniforms.has(uniformName)) {
-                                uniforms.set(uniformName, layaType);
-                                console.log(`[ShaderConversion] Extracted uniform from block: ${uniformName} (${layaType})`);
-                            }
-                        }
-                    }
-                }
-                searchIndex = blockEnd + 1;
-            } else {
-                searchIndex = endIndex + 1;
-            }
-        } else {
-            // 单独的 uniform 声明
-            const parts = uniformLine.split(/\s+/).filter(p => p.length > 0);
-            if (parts.length >= 3) {
-                const type = parts[1];
-                const name = parts[2].split(/[,\[]/)[0].trim();
-                if (type === "sampler2D" || type === "samplerCube") {
-                    searchIndex = endIndex + 1;
-                    continue;
-                }
-                if (name) {
-                    const uniformName = ensureUniformName(name);
-                    const layaType = mapGLSLTypeToLaya(type);
-                    if (layaType && !uniforms.has(uniformName)) {
-                        uniforms.set(uniformName, layaType);
-                    }
-                }
-            }
-            searchIndex = endIndex + 1;
-        }
-    }
-}
-
-// 映射 GLSL 类型到 Laya 类型
-function mapGLSLTypeToLaya(type: string): string | null {
-    if (type === "vec2") return "Vector2";
-    if (type === "vec3") return "Vector3";
-    if (type === "vec4") return "Vector4";
-    if (type === "float") return "Float";
-    if (type === "int") return "Int";
-    if (type === "bool") return "Bool";
-    return null;
 }
 
 // 转换 Cocos GLSL 代码到 Laya 格式
@@ -1236,57 +1067,6 @@ function toCamelCase(str: string): string {
         }
     }
     return result;
-}
-
-function collectDefinesFromCode(source: string, collector: Set<string>): void {
-    // 使用简单的字符串查找收集宏定义
-    let searchIndex = 0;
-    while (true) {
-        const ifdefIndex = source.indexOf("#ifdef", searchIndex);
-        const ifndefIndex = source.indexOf("#ifndef", searchIndex);
-        const ifIndex = source.indexOf("#if", searchIndex);
-        const elifIndex = source.indexOf("#elif", searchIndex);
-
-        let nextIndex = -1;
-        let macroStart = -1;
-
-        if (ifdefIndex !== -1 && (nextIndex === -1 || ifdefIndex < nextIndex)) {
-            nextIndex = ifdefIndex;
-            macroStart = ifdefIndex + 6;
-        }
-        if (ifndefIndex !== -1 && (nextIndex === -1 || ifndefIndex < nextIndex)) {
-            nextIndex = ifndefIndex;
-            macroStart = ifndefIndex + 7;
-        }
-        if (ifIndex !== -1 && (nextIndex === -1 || ifIndex < nextIndex)) {
-            nextIndex = ifIndex;
-            macroStart = ifIndex + 3;
-        }
-        if (elifIndex !== -1 && (nextIndex === -1 || elifIndex < nextIndex)) {
-            nextIndex = elifIndex;
-            macroStart = elifIndex + 5;
-        }
-
-        if (nextIndex === -1) break;
-
-        // 跳过空白字符
-        while (macroStart < source.length && /\s/.test(source[macroStart])) {
-            macroStart++;
-        }
-
-        // 提取宏名称
-        let macroEnd = macroStart;
-        while (macroEnd < source.length && /[A-Za-z0-9_]/.test(source[macroEnd])) {
-            macroEnd++;
-        }
-
-        if (macroEnd > macroStart) {
-            const macroName = source.substring(macroStart, macroEnd);
-            collector.add(macroName);
-        }
-
-        searchIndex = nextIndex + 1;
-    }
 }
 
 function inferUniformType(name: string, rawValue?: string): string | null {

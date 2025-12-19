@@ -112,7 +112,57 @@ export class MaterialConversion implements ICocosAssetConversion {
         // 转换材质属性（传入 shader 的 uniform 信息）
         this.convertMaterialProps(layaMaterial, props, defines, shaderUniformInfo);
 
+        // 为 Toon shader 添加必要的默认参数（如果材质中没有设置）
+        // 这些参数对于 Toon 着色效果至关重要
+        if (shaderInfo.type === "toon_default" || shaderInfo.source === "toon") {
+            this.ensureToonDefaults(layaMaterial.props);
+        }
+
         return layaMaterial;
+    }
+
+    /**
+     * 确保 Toon shader 有必要的默认参数
+     * Cocos toon.effect 中定义的默认值必须显式写入材质文件
+     */
+    private ensureToonDefaults(props: any): void {
+        // Toon shading parameters - 必须与 Cocos toon.effect 中的默认值一致
+        if (props.baseStep === undefined) props.baseStep = 0.8;
+        if (props.baseFeather === undefined) props.baseFeather = 0.001;
+        if (props.shadeStep === undefined) props.shadeStep = 0.5;
+        if (props.shadeFeather === undefined) props.shadeFeather = 0.001;
+        if (props.shadowCover === undefined) props.shadowCover = 0.5;
+        
+        // Color scale
+        if (props.colorScale === undefined) props.colorScale = [1.0, 1.0, 1.0];
+        
+        // Base color
+        if (props.baseColor === undefined) props.baseColor = [0.6, 0.6, 0.6, 1.0];
+        
+        // Shade colors
+        if (props.shadeColor1 === undefined) props.shadeColor1 = [0.4, 0.4, 0.4, 1.0];
+        if (props.shadeColor2 === undefined) props.shadeColor2 = [0.2, 0.2, 0.2, 1.0];
+        
+        // Specular (w 分量控制高光大小，0.3 是合理的默认值)
+        if (props.specular === undefined) props.specular = [1.0, 1.0, 1.0, 0.3];
+        
+        // Emissive
+        if (props.emissive === undefined) props.emissive = [0.0, 0.0, 0.0, 1.0];
+        if (props.emissiveScale === undefined) props.emissiveScale = [1.0, 1.0, 1.0];
+        
+        // Normal strength
+        if (props.normalStrength === undefined) props.normalStrength = 1.0;
+        
+        // Outline parameters (Cocos toon.effect defaults: lineWidth=10, depthBias=0)
+        if (props.lineWidth === undefined) props.lineWidth = 10.0;
+        if (props.depthBias === undefined) props.depthBias = 0.0;
+        if (props.outlineColor === undefined) props.outlineColor = [0.0, 0.0, 0.0, 1.0];
+        
+        // Tiling offset
+        if (props.tilingOffset === undefined) props.tilingOffset = [1.0, 1.0, 0.0, 0.0];
+        
+        // Alpha threshold
+        if (props.alphaThreshold === undefined) props.alphaThreshold = 0.5;
     }
 
     private getShaderUniforms(shaderType: string): { all: Set<string>, textures: Set<string>, colors: Set<string>, vectors: Set<string> } {
@@ -1289,6 +1339,11 @@ export class MaterialConversion implements ICocosAssetConversion {
         for (const [defineKey, defineValue] of Object.entries(defines)) {
             // 跳过值为 false 或 null 的 define
             if (defineValue === false || defineValue === null || defineValue === undefined)
+                continue;
+
+            // 跳过 USE_BASE_COLOR_MAP，因为当添加 mainTexture 纹理时，会自动添加 MAINTEXTURE define
+            // 这是为了兼容 Cocos 的 toon shader，其中 USE_BASE_COLOR_MAP 在 Laya 中对应 MAINTEXTURE
+            if (defineKey === "USE_BASE_COLOR_MAP")
                 continue;
 
             // 特殊处理：USE_ALPHA_TEST 需要设置 alphaTest 属性
