@@ -132,35 +132,35 @@ export class MaterialConversion implements ICocosAssetConversion {
         if (props.shadeStep === undefined) props.shadeStep = 0.5;
         if (props.shadeFeather === undefined) props.shadeFeather = 0.001;
         if (props.shadowCover === undefined) props.shadowCover = 0.5;
-        
+
         // Color scale
         if (props.colorScale === undefined) props.colorScale = [1.0, 1.0, 1.0];
-        
+
         // Base color
         if (props.baseColor === undefined) props.baseColor = [0.6, 0.6, 0.6, 1.0];
-        
+
         // Shade colors
         if (props.shadeColor1 === undefined) props.shadeColor1 = [0.4, 0.4, 0.4, 1.0];
         if (props.shadeColor2 === undefined) props.shadeColor2 = [0.2, 0.2, 0.2, 1.0];
-        
+
         // Specular (w 分量控制高光大小，0.3 是合理的默认值)
         if (props.specular === undefined) props.specular = [1.0, 1.0, 1.0, 0.3];
-        
+
         // Emissive
         if (props.emissive === undefined) props.emissive = [0.0, 0.0, 0.0, 1.0];
         if (props.emissiveScale === undefined) props.emissiveScale = [1.0, 1.0, 1.0];
-        
+
         // Normal strength
         if (props.normalStrength === undefined) props.normalStrength = 1.0;
-        
+
         // Outline parameters (Cocos toon.effect defaults: lineWidth=10, depthBias=0)
         if (props.lineWidth === undefined) props.lineWidth = 10.0;
         if (props.depthBias === undefined) props.depthBias = 0.0;
         if (props.outlineColor === undefined) props.outlineColor = [0.0, 0.0, 0.0, 1.0];
-        
+
         // Tiling offset
         if (props.tilingOffset === undefined) props.tilingOffset = [1.0, 1.0, 0.0, 0.0];
-        
+
         // Alpha threshold
         if (props.alphaThreshold === undefined) props.alphaThreshold = 0.5;
     }
@@ -1284,7 +1284,7 @@ export class MaterialConversion implements ICocosAssetConversion {
 
             // 向量相关：包含 scale、tiling、offset、position、normal 等关键词
             // 注意：scale 应该在 color 之前检查，因为 colorScale 是向量而不是颜色
-            if (lowerKey.includes("scale") || lowerKey.includes("tiling") || lowerKey.includes("offset") || 
+            if (lowerKey.includes("scale") || lowerKey.includes("tiling") || lowerKey.includes("offset") ||
                 lowerKey.includes("position") || lowerKey.includes("normal")) {
                 return "vector";
             }
@@ -1335,6 +1335,17 @@ export class MaterialConversion implements ICocosAssetConversion {
             handleProperty(key, value, propertyType);
         }
 
+        // Cocos 宏到 Laya 宏的映射表
+        const cocosToLayaDefineMap: Record<string, string> = {
+            "USE_VERTEX_COLOR": "ENABLEVERTEXCOLOR",
+            "USE_ALBEDO_MAP": "ALBEDOTEXTURE",
+            "USE_NORMAL_MAP": "NORMALTEXTURE",
+            "USE_PBR_MAP": "METALLICGLOSSTEXTURE",
+            "USE_OCCLUSION_MAP": "OCCLUSIONTEXTURE",
+            "USE_EMISSIVE_MAP": "EMISSIONTEXTURE"
+            // 可以继续添加其他宏映射
+        };
+
         // 处理 defines 启用的特性
         for (const [defineKey, defineValue] of Object.entries(defines)) {
             // 跳过值为 false 或 null 的 define
@@ -1351,6 +1362,14 @@ export class MaterialConversion implements ICocosAssetConversion {
                 layaProps.alphaTest = true;
                 const defineName = this.toDefineName(defineKey);
                 this.pushDefine(layaProps.defines, defineName);
+                continue;
+            }
+
+            // 检查是否有 Cocos -> Laya 的宏映射
+            if (cocosToLayaDefineMap[defineKey]) {
+                const layaDefineName = cocosToLayaDefineMap[defineKey];
+                this.pushDefine(layaProps.defines, layaDefineName);
+                console.log(`[MaterialConversion] Mapped Cocos define "${defineKey}" to Laya define "${layaDefineName}"`);
                 continue;
             }
 

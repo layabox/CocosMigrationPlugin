@@ -154,10 +154,17 @@ function pickBoolean(sources: AnyRecord[], keys: string[]): boolean | undefined 
 function normalizeIntensity(value: number): number {
     if (!Number.isFinite(value))
         return 1;
-    if (value <= 10)
-        return clamp(value, 0, 10);
-    const scaled = value / 6500;
-    return clamp(Number(scaled.toFixed(3)), 0, 10);
+    // Cocos illuminance is in lux, default is ~65000
+    // Laya intensity is typically 0-1, with 1 being the default
+    // If value > 100, assume it's in lux and normalize
+    if (value > 100) {
+        // Cocos default illuminance 65000 -> Laya intensity 1
+        const scaled = value / 65000;
+        return clamp(Number(scaled.toFixed(3)), 0, 10);
+    }
+    // If value <= 100, assume it's already a reasonable intensity value
+    // Cocos intensity 1 -> Laya intensity 1
+    return clamp(value, 0, 10);
 }
 
 function clamp(value: number, min: number, max: number): number {
