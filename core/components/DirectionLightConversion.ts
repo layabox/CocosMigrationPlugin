@@ -1,9 +1,10 @@
 import { registerComponentParser } from "../ComponentParserRegistry";
 import { colorToLayaColor } from "../PrefabConversion";
+import { apertureData, exposure, findCameraData, ISOData, shutterData } from "../Utils";
 
 type AnyRecord = Record<string, any> | undefined | null;
 
-registerComponentParser("cc.DirectionalLight", ({ node, data }) => {
+registerComponentParser("cc.DirectionalLight", ({ conversion, owner, node, data }) => {
     if (!data)
         return;
 
@@ -22,14 +23,27 @@ registerComponentParser("cc.DirectionalLight", ({ node, data }) => {
     if (color)
         comp.color = colorToLayaColor(color);
 
-    const intensitySource = pickNumber(
-        [data, shadow, bake],
-        ["_illuminance", "illuminance", "_intensity", "intensity", "_strength", "strength"]
-    );
-    if (intensitySource !== undefined) {
-        const normalized = normalizeIntensity(intensitySource);
-        comp.strength = normalized;
-        comp.intensity = normalized;
+    // const intensitySource = pickNumber(
+    //     [data, shadow, bake],
+    //     ["_illuminance", "illuminance", "_intensity", "intensity", "_strength", "strength"]
+    // );
+    const illuminance = data._illuminance;
+
+    if (illuminance !== undefined) {
+        // 获取相机曝光参数
+        const cameraData = findCameraData(conversion);
+        let exposureVal = 1.0;
+        if (cameraData) {
+            const aperture = apertureData[cameraData._aperture ?? 19];
+            const shutter = shutterData[cameraData._shutter ?? 7];
+            const ISO = ISOData[cameraData._iso ?? 0];
+            exposureVal = exposure(aperture, shutter, ISO);
+        }
+
+        // 最终强度 = lux * exposure
+        const finalIntensity = illuminance * exposureVal;
+        //comp.strength = finalIntensity;
+        comp.intensity = finalIntensity;
     }
 
     const angle = pickNumber([data, shadow], ["_shadowAngle", "shadowAngle", "_angle", "angle"]);
@@ -81,6 +95,7 @@ registerComponentParser("cc.DirectionalLight", ({ node, data }) => {
             comp.lightmapBakedType = bakeable ? 2 : 1;
     }
 });
+
 
 function ensureComponent(node: any, type: string): any {
     let comp = node._$comp.find((item: any) => item._$type === type);
@@ -149,22 +164,6 @@ function pickBoolean(sources: AnyRecord[], keys: string[]): boolean | undefined 
         }
     }
     return undefined;
-}
-
-function normalizeIntensity(value: number): number {
-    if (!Number.isFinite(value))
-        return 1;
-    // Cocos illuminance is in lux, default is ~65000
-    // Laya intensity is typically 0-1, with 1 being the default
-    // If value > 100, assume it's in lux and normalize
-    if (value > 100) {
-        // Cocos default illuminance 65000 -> Laya intensity 1
-        const scaled = value / 65000;
-        return clamp(Number(scaled.toFixed(3)), 0, 10);
-    }
-    // If value <= 100, assume it's already a reasonable intensity value
-    // Cocos intensity 1 -> Laya intensity 1
-    return clamp(value, 0, 10);
 }
 
 function clamp(value: number, min: number, max: number): number {
