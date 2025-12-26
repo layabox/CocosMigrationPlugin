@@ -5,6 +5,7 @@ const internalUUIDMap: Record<string, string> = {
 };
 
 export function formatUuid(uuid: string, owner: ICocosMigrationTool): string {
+
     const asset = owner.allAssets.get(uuid);
     if (asset) {
         if (null != asset.userData.__layaSubName) {

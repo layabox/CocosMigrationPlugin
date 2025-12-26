@@ -49,8 +49,8 @@ registerComponentParser("cc.Camera", ({ owner, node, data }) => {
     if (hasOwn(data, "_useHDR"))
         node.enableHDR = !!data._useHDR;
 
-    if (hasOwn(data, "_msaa"))
-        node.msaa = !!data._msaa;
+    // 自动开启 MSAA
+    node.msaa = true;
 
     if (hasOwn(data, "_fxaa"))
         node.fxaa = !!data._fxaa;

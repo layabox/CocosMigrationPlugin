@@ -36,6 +36,33 @@ export class ModelConversion implements ICocosAssetConversion {
         registerSubAssets("textures", "img");
         registerSubAssets("skeletons", "lani");
 
+
+
+        await fs.promises.copyFile(sourcePath, targetPath);
+
+        // 为 FBX 文件设置正确的导入参数，确保自动应用单位转换
+        // Cocos 的模型单位是厘米（cm），Laya 默认是米（m）
+        // 设置 convertUnits: 1 (厘米) 和 normalizeMesh: true，让 Laya 自动应用 0.01 缩放
+        const fileExt = sourcePath.toLowerCase().substring(sourcePath.lastIndexOf("."));
+        const isModelFile = [".fbx", ".gltf", ".glb", ".obj"].includes(fileExt);
+
+        let metaContent: any = { uuid: meta.uuid };
+        if (isModelFile) {
+            metaContent.importer = {
+                convertUnits: 1, // 1 = 厘米，0 = 米
+                normalizeMesh: true, // 自动归一化：如果单位是 cm，会自动应用 0.01 缩放
+                scaleFactor: 1 // 默认缩放因子
+            };
+        }
+        this.owner.allAssets.set(meta.uuid, {
+            sourcePath,
+            userData: metaContent
+        });
+        await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", metaContent);
+        
+        const relativePath = EditorEnv.assetMgr.toRelativePath(targetPath);
+        await EditorEnv.assetMgr.waitForAssetsReady([relativePath]);
+        
         if (subAssets.scenes?.length > 0) {
             let sceneAssetId: string = subAssets["scenes"][0];
             this.owner.allAssets.set(sceneAssetId, {
@@ -49,24 +76,5 @@ export class ModelConversion implements ICocosAssetConversion {
                 (this.owner.getAssetConversion("prefab") as PrefabConversion).parseElements(elements);
             }
         }
-
-        await fs.promises.copyFile(sourcePath, targetPath);
-        
-        // 为 FBX 文件设置正确的导入参数，确保自动应用单位转换
-        // Cocos 的模型单位是厘米（cm），Laya 默认是米（m）
-        // 设置 convertUnits: 1 (厘米) 和 normalizeMesh: true，让 Laya 自动应用 0.01 缩放
-        const fileExt = sourcePath.toLowerCase().substring(sourcePath.lastIndexOf("."));
-        const isModelFile = [".fbx", ".gltf", ".glb", ".obj"].includes(fileExt);
-        
-        let metaContent: any = { uuid: meta.uuid };
-        if (isModelFile) {
-            metaContent.importer = {
-                convertUnits: 1, // 1 = 厘米，0 = 米
-                normalizeMesh: true, // 自动归一化：如果单位是 cm，会自动应用 0.01 缩放
-                scaleFactor: 1 // 默认缩放因子
-            };
-        }
-        
-        await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", metaContent);
     }
 }

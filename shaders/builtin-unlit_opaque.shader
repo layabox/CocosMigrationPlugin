@@ -17,6 +17,10 @@ Shader3D Start
         USE_TEXTURE: { type: bool, default: false },
         USE_VERTEX_COLOR: { type: bool, default: false },
         USE_ALPHA_TEST: { type: bool, default: false },
+        ALPHA_TEST_CHANNEL_r: { type: bool, default: false },
+        ALPHA_TEST_CHANNEL_g: { type: bool, default: false },
+        ALPHA_TEST_CHANNEL_b: { type: bool, default: false },
+        ALPHA_TEST_CHANNEL_a: { type: bool, default: false },
     },
     shaderPass:[
         {
@@ -108,7 +112,17 @@ GLSL Start
         #endif
 
         #ifdef USE_ALPHA_TEST
-            if (o.a < alphaThreshold) discard;
+            #ifdef ALPHA_TEST_CHANNEL_r
+                if (o.r < alphaThreshold) discard;
+            #elif defined(ALPHA_TEST_CHANNEL_g)
+                if (o.g < alphaThreshold) discard;
+            #elif defined(ALPHA_TEST_CHANNEL_b)
+                if (o.b < alphaThreshold) discard;
+            #elif defined(ALPHA_TEST_CHANNEL_a)
+                if (o.a < alphaThreshold) discard;
+            #else
+                if (o.a < alphaThreshold) discard;
+            #endif
         #endif
         
         #ifdef FOG
