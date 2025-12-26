@@ -6,12 +6,17 @@ Shader3D Start
     shaderType:D3,
     supportReflectionProbe:true,
     uniformMap:{
-        mainTexture: { type: Texture2D },
+        mainTexture: { type: Texture2D, options: { define: "USE_TEXTURE" } },
         tilingOffset: { type: Vector4, default: [1.0, 1.0, 0.0, 0.0] },
 
         mainColor: { type: Color, default: [1, 1, 1, 1] },
-        colorScale: { type: Vector3 ,default: [1.0, 1.0, 1.0] },
+        colorScale: { type: Vector3, default: [1.0, 1.0, 1.0] },
         alphaThreshold: { type: Float, default: 0.5 },
+    },
+    defines: {
+        USE_TEXTURE: { type: bool, default: false },
+        USE_VERTEX_COLOR: { type: bool, default: false },
+        USE_ALPHA_TEST: { type: bool, default: false },
     },
     shaderPass:[
         {
@@ -30,100 +35,89 @@ Shader3D End
 
 GLSL Start
 #defineGLSL CCUnlitVS
-#define SHADER_NAME builtin-unlit_opaque
+    #define SHADER_NAME builtin-unlit_opaque
 
-#include "Math.glsl";
-#include "Sprite3DVertex.glsl";
-#include "Camera.glsl";
-#include "VertexCommon.glsl";
+    #include "Math.glsl";
+    #include "Scene.glsl";
+    #include "SceneFogInput.glsl";
+    #include "Camera.glsl";
+    #include "Sprite3DVertex.glsl";
+    #include "VertexCommon.glsl";
 
-#ifdef USE_VERTEX_COLOR
-out vec4 v_color;
-#endif
-
-#ifdef USE_TEXTURE
-varying vec2 v_uv;
-#endif
-
-void main()
-{
-    Vertex vertex;
-    getVertexParams(vertex);
-
-    mat4 worldMat = getWorldMatrix();
-
-    #ifdef USE_TEXTURE
-        v_uv = a_Texcoord0 * tilingOffset.xy + tilingOffset.zw;
-        #ifdef SAMPLE_FROM_RT
-            v_uv = u_CameraPos.w > 1.0 ? vec2(v_uv.x, 1.0 - v_uv.y) : v_uv;
-        #endif
-    #endif
+    varying vec2 v_uv;
 
     #ifdef USE_VERTEX_COLOR
-        v_color = a_Color;
+    varying vec4 v_color;
     #endif
 
+    void main()
+    {
+        Vertex vertex;
+        getVertexParams(vertex);
 
-    gl_Position = u_Projection * (u_View * worldMat) * vec4(vertex.positionOS, 1.0);
+        v_uv = vertex.texCoord0 * tilingOffset.xy + tilingOffset.zw;
 
-    // #ifdef FOG
-    //     FogHandle(gl_Position.z);
-    // #endif
-}
+        #ifdef USE_VERTEX_COLOR
+            v_color = vertex.vertexColor;
+        #endif
+
+        mat4 worldMat = getWorldMatrix();
+        vec4 pos = (worldMat * vec4(vertex.positionOS, 1.0));
+        vec3 positionWS = pos.xyz / pos.w;
+        
+        gl_Position = getPositionCS(positionWS);
+        gl_Position = remapPositionZ(gl_Position);
+
+        #ifdef FOG
+            FogHandle(gl_Position.z);
+        #endif
+    }
 #endGLSL
 
 #defineGLSL CCUnlitFS
-
     #define SHADER_NAME builtin-unlit_opaque
 
-#include "Color.glsl";
-// #include "SceneFog.glsl";
+    #include "Color.glsl";
+    #include "Scene.glsl";
+    #include "SceneFog.glsl";
+    #include "Camera.glsl";
+    #include "Sprite3DFrag.glsl";
 
-varying vec2 v_uv;
-
-#ifdef USE_VERTEX_COLOR
-in vec4 v_color;
-#endif
-
-
-void main() 
-{
-    vec4 o = mainColor;
-    o.rgb *= colorScale;
+    varying vec2 v_uv;
 
     #ifdef USE_VERTEX_COLOR
-        o.rgb *= gammaToLinear(v_color.rgb);//use linear
-        o.a *= v_color.a;
+    varying vec4 v_color;
     #endif
 
-    #ifdef USE_TEXTURE
-        vec4 texColor = texture2D(mainTexture, v_uv);
-        texColor.rgb = gammaToLinear(texColor.rgb);
-        o *= texColor;
-    #endif
+    void main() 
+    {
+        vec4 o = mainColor;
+        o.rgb *= colorScale;
 
-    #ifdef USE_ALPHA_TEST
-        // 根据 ALPHA_TEST_CHANNEL 宏定义选择不同的通道进行测试
-        float alphaTestValue = alphaThreshold;
-        #ifdef ALPHA_TEST_CHANNEL_r
-            if (o.r < alphaTestValue) discard;
-        #elif defined(ALPHA_TEST_CHANNEL_g)
-            if (o.g < alphaTestValue) discard;
-        #elif defined(ALPHA_TEST_CHANNEL_b)
-            if (o.b < alphaTestValue) discard;
-        #elif defined(ALPHA_TEST_CHANNEL_a)
-            if (o.a < alphaTestValue) discard;
-        #else
-            // 默认使用 alpha 通道
-            if (o.a < alphaTestValue) discard;
+        #ifdef USE_VERTEX_COLOR
+            o.rgb *= gammaToLinear(v_color.rgb);
+            o.a *= v_color.a;
         #endif
-    #endif
-    
-    // #ifdef FOG
-    //     o = sceneLitFog(o);
-    // #endif
-    gl_FragColor = o;
-}
+
+        #ifdef USE_TEXTURE
+            vec4 texColor = texture2D(mainTexture, v_uv);
+            #ifdef Gamma_mainTexture
+                texColor.rgb = gammaToLinear(texColor.rgb);
+            #endif
+            o *= texColor;
+        #endif
+
+        #ifdef USE_ALPHA_TEST
+            if (o.a < alphaThreshold) discard;
+        #endif
+        
+        #ifdef FOG
+            o.rgb = scenUnlitFog(o.rgb);
+        #endif
+
+        gl_FragColor = o;
+        gl_FragColor = outputTransform(gl_FragColor);
+    }
 #endGLSL
 
 #defineGLSL CCUnlitPlanarShadowVS
