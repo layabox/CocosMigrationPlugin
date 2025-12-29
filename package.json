@@ -1,0 +1,11 @@
+{
+  "name": "cocos-migration-plugin",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "LayaBox",
+  "license": "MIT",
+  "description": "A LayaAir plugin to migrate Cocos Creator project assets to LayaAir."
+}
