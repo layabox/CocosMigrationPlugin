@@ -176,6 +176,10 @@ GLSL Start
         // 亮度校正：Laya PBR 整体偏亮，适当降低以匹配 Cocos
         surfaceColor.rgb *= 0.85;
         
+        // 对比度增强：提高对比度使画面更有层次感
+        float contrast = 1.3; // 对比度系数，大于1增加对比度
+        surfaceColor.rgb = (surfaceColor.rgb - 0.5) * contrast + 0.5;
+        
         #ifdef FOG
             surfaceColor.rgb = sceneLitFog(surfaceColor.rgb);
         #endif

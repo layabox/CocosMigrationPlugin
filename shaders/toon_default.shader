@@ -107,7 +107,7 @@ void main()
     // lineWidth scaled for appropriate visual size
     // Cocos uses 0.001, but Laya coordinate system is different
     // Using 0.00001 to match visual appearance (Cocos lineWidth=10 ≈ Laya lineWidth=10)
-    float width = lineWidth * 0.00001;
+    float width = lineWidth * 0.00003;
     
     vec3 positionOS = vertex.positionOS;
     
