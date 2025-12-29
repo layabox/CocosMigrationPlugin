@@ -2,12 +2,15 @@ import fs from "fs";
 import fpath from "path";
 import { ICocosAssetConversion, ICocosMigrationTool as ICocosMigrationTool } from "./ICocosMigrationTool";
 import { ConversionRegistry } from "./Registry";
+import { Utils } from "../../cankao/engineSource/src/layaAir/laya/utils/Utils";
+import { internalUUIDMap } from "./Utils";
 
 const ConversionPiority = Symbol("ConversionPriority");
 
 export class CocosMigrationTool implements ICocosMigrationTool {
     projectConfig: any;
     cocosProjectRoot: string;
+    static assetsPath: string;
     allAssets: Map<string, { sourcePath: string, userData: any }>;
     _pendingSkyboxMaterials?: Array<{
         path: string;
@@ -38,12 +41,20 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         this._items = [];
         this._registry = new Map();
         this._folders = new Set();
+        const obj = internalUUIDMap;
+        for (const k in obj) delete obj[k];
 
         options = options || {};
 
         this._copyUnknownAssets = !!options.copyUnknownAssets;
 
         let cocosProjectRoot = tasks[0].sourceFolder;
+
+        let assetsPath = tasks[0].targetFolder;
+
+        CocosMigrationTool.assetsPath = fpath.relative(EditorEnv.assetsPath, assetsPath);
+
+
         //读取cocos的配置文件
         while (true) {
             let testPath = fpath.join(cocosProjectRoot, "settings", "v2");

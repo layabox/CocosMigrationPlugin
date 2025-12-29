@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { ICocosAssetConversion, ICocosMigrationTool } from "../ICocosMigrationTool";
-import { formatUuid } from "../Utils";
+import { formatUuid, getInternalUUID } from "../Utils";
 
 /**
  * 开关：是否将所有自定义 shader 强制转换为 Laya 内置的 Unlit shader
@@ -1510,6 +1510,11 @@ export class MaterialConversion implements ICocosAssetConversion {
     private mapUuid(uuid: string, asset?: { sourcePath: string, userData: any }): string {
         if (!uuid)
             return uuid;
+
+        const internalUUID = getInternalUUID(uuid);
+        if(internalUUID){
+            return internalUUID;
+        }
 
         const normalized = stripAt(uuid);
         const formatted = formatUuid(normalized, this.owner);

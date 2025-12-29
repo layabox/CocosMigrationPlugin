@@ -1,9 +1,48 @@
 import { ICocosAssetConversion, ICocosMigrationTool } from "../ICocosMigrationTool";
 import * as fs from "fs";
 import { PrefabConversion } from "../PrefabConversion";
+import fpath from "path";
+import { internalUUIDMap } from "../Utils";
 
 export class ModelConversion implements ICocosAssetConversion {
     constructor(private owner: ICocosMigrationTool) { }
+
+    /**
+     * 建立图片 UUID 到文件名的映射关系，并处理 texture 资源
+     * 解析 userData.imageMetas 建立映射表，然后在 subMetas 中查找 texture 资源，
+     * 通过 imageUuidOrDatabaseUri 找到对应的图片文件名并记录
+     */
+    private processTextureImageMapping(meta: any, targetPath: string): void {
+        targetPath = fpath.relative(EditorEnv.assetsPath, targetPath);
+        //去掉targetPath的最后一层目录
+        targetPath = targetPath.substring(0, targetPath.lastIndexOf(fpath.sep));
+        // 建立图片 UUID 到文件名的映射关系
+        // 解析 userData.imageMetas，建立映射表
+        if (meta.userData && meta.userData.imageMetas && Array.isArray(meta.userData.imageMetas)) {
+            for (let imageMeta of meta.userData.imageMetas) {
+                if (imageMeta.uri && imageMeta.name) {
+                    internalUUIDMap[imageMeta.uri] = fpath.join(targetPath, imageMeta.name)
+                }
+            }
+        }
+
+        // 处理 subMetas 中的 texture 资源，建立 texture UUID 到图片文件名的映射
+        if (meta.subMetas) {
+            for (let subId in meta.subMetas) {
+                let subMeta = meta.subMetas[subId];
+
+                // 处理 texture 资源
+                if (subMeta.importer === "texture" && subMeta.userData) {
+                    let textureUuid = subMeta.uuid;
+                    let imageUuidOrDatabaseUri = subMeta.userData.imageUuidOrDatabaseUri;
+                    const path = internalUUIDMap[imageUuidOrDatabaseUri];
+                    if(path && textureUuid){
+                        internalUUIDMap[textureUuid] = path;
+                    }
+                }
+            }
+        }
+    }
 
     async run(sourcePath: string, targetPath: string, meta: any) {
         let subAssets = meta.userData.assetFinder;
@@ -36,7 +75,8 @@ export class ModelConversion implements ICocosAssetConversion {
         registerSubAssets("textures", "img");
         registerSubAssets("skeletons", "lani");
 
-
+        // 建立图片 UUID 到文件名的映射关系，并处理 texture 资源
+        this.processTextureImageMapping(meta, targetPath);
 
         await fs.promises.copyFile(sourcePath, targetPath);
 
@@ -59,10 +99,10 @@ export class ModelConversion implements ICocosAssetConversion {
             userData: metaContent
         });
         await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", metaContent);
-        
+
         const relativePath = EditorEnv.assetMgr.toRelativePath(targetPath);
         await EditorEnv.assetMgr.waitForAssetsReady([relativePath]);
-        
+
         if (subAssets.scenes?.length > 0) {
             let sceneAssetId: string = subAssets["scenes"][0];
             this.owner.allAssets.set(sceneAssetId, {

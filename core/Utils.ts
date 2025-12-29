@@ -1,68 +1,66 @@
 import { ICocosMigrationTool } from "./ICocosMigrationTool";
 import fpath from "path";
-const internalUUIDMap: Record<string, string> = {
-
-};
+export const internalUUIDMap: Record<string, string> = {};
 export function exposure(aperture: number, shutterSpeed: number, sensitivity: number): number {
     const e = aperture * aperture * shutterSpeed * 100 / sensitivity;
     return 1.0 / (1.2 * e);
 }
 export const apertureData: Record<number, number> = {
-    0:1.8,
-    1:2.0,
-    2:2.2,
-    3:2.5,
-    4:2.8,
-    5:3.2,
-    6:3.5,
-    7:4.0,
-    8:4.5,
-    9:5.0,
-    10:5.6,
-    11:6.3,
-    12:7.1,
-    13:8.0,
-    14:9.0,
-    15:10.0,
-    16:11.0,
-    17:13.0,
-    18:14.0,
-    19:16.0,
-    20:18.0,
-    21:20.0,
-    22:22.0,
+    0: 1.8,
+    1: 2.0,
+    2: 2.2,
+    3: 2.5,
+    4: 2.8,
+    5: 3.2,
+    6: 3.5,
+    7: 4.0,
+    8: 4.5,
+    9: 5.0,
+    10: 5.6,
+    11: 6.3,
+    12: 7.1,
+    13: 8.0,
+    14: 9.0,
+    15: 10.0,
+    16: 11.0,
+    17: 13.0,
+    18: 14.0,
+    19: 16.0,
+    20: 18.0,
+    21: 20.0,
+    22: 22.0,
 };
 export const shutterData: Record<number, number> = {
-    0:1,
-    1:2,
-    2:4,
-    3:8,
-    4:15,
-    5:30,
-    6:60,
-    7:125,
-    8:250,
-    9:500,
-    10:1000,
-    11:2000,
-    12:4000,
-    13:8000,
-    14:16000,
-    15:32000,
-    16:64000,
-    17:128000,
-    18:256000,
-    19:512000,
-    20:1024000,
+    0: 1,
+    1: 2,
+    2: 4,
+    3: 8,
+    4: 15,
+    5: 30,
+    6: 60,
+    7: 125,
+    8: 250,
+    9: 500,
+    10: 1000,
+    11: 2000,
+    12: 4000,
+    13: 8000,
+    14: 16000,
+    15: 32000,
+    16: 64000,
+    17: 128000,
+    18: 256000,
+    19: 512000,
+    20: 1024000,
 }
 export const ISOData: Record<number, number> = {
-    0:100,
-    1:200,
-    2:400,
-    3:800,
-    4:1600,
-    5:3200,
-    6:6400,
+    0: 100,
+    1: 200,
+    2: 400,
+    3: 800,
+    4: 1600,
+    5: 3200,
+    6: 6400,
 }
 
 /**
@@ -79,8 +77,23 @@ export function findCameraData(conversion: any): any {
     }
     return undefined;
 }
+export function getInternalUUID(uuid: string): string {
+    if (internalUUIDMap[uuid]) {
+        const path = internalUUIDMap[uuid];
+        const info = EditorEnv.assetMgr.getAsset(path);
+        if (info) {
+            return info.id;
+        }
+    }
+    return null;
+}
+
 
 export function formatUuid(uuid: string, owner: ICocosMigrationTool): string {
+    const internalUUID = getInternalUUID(uuid);
+    if (internalUUID) {
+        return internalUUID;
+    }
 
     const asset = owner.allAssets.get(uuid);
     if (asset) {
