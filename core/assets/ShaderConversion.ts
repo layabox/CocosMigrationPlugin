@@ -146,7 +146,7 @@ export class ShaderConversion implements ICocosAssetConversion {
             
             // 检查是否已存在于插件的 shaders 目录
             if (checkShaderExists(shaderFileName)) {
-                console.log(`[ShaderConversion] Using predefined shader: ${pluginDirName}/shaders/${shaderFileName}`);
+                console.debug(`[ShaderConversion] Using predefined shader: ${pluginDirName}/shaders/${shaderFileName}`);
                 return;
             }
             const techniqueShaderName = `${shaderName}_${defaultTechniqueName}`;
@@ -169,7 +169,7 @@ export class ShaderConversion implements ICocosAssetConversion {
 
                 // 检查是否已存在于插件的 shaders 目录
                 if (checkShaderExists(shaderFileName)) {
-                    console.log(`[ShaderConversion] Using predefined shader: ${pluginDirName}/shaders/${shaderFileName}`);
+                    console.debug(`[ShaderConversion] Using predefined shader: ${pluginDirName}/shaders/${shaderFileName}`);
                     continue;
                 }
 
@@ -204,7 +204,7 @@ export class ShaderConversion implements ICocosAssetConversion {
                 const shaderPath = fpath.join(basePath, shaderFileName);
 
                 await fs.promises.writeFile(shaderPath, shaderContent, "utf8");
-                console.log(`[ShaderConversion] Generated: ${shaderFileName}`);
+                console.debug(`[ShaderConversion] Generated: ${shaderFileName}`);
 
                 // 生成 meta 文件
                 const techniqueUuid = meta?.uuid ? `${meta.uuid}_${techniqueName}` : undefined;

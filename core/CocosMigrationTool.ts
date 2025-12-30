@@ -32,6 +32,7 @@ export class CocosMigrationTool implements ICocosMigrationTool {
     async run(tasks: ReadonlyArray<{
         sourceFolder: string,
         targetFolder?: string,
+        ignoreFiles?: Set<string>
     }>, options?: {
         cocosInternalAssetsFolder?: string,
         cocosProjectConfig?: any,
@@ -96,8 +97,10 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         }
 
         if (internalAssetsFolder && tasks.findIndex(t => t.sourceFolder == internalAssetsFolder) === -1) {
-            //console.warn("临时去掉内部资源迁移，需要的时候再打开");
-            tasks = tasks.concat({ sourceFolder: internalAssetsFolder, targetFolder: this.getCCInternalPath() });
+            tasks = tasks.concat({
+                sourceFolder: internalAssetsFolder,
+                targetFolder: this.getCCInternalPath()
+            });
         }
 
         let tmpFolders: Array<string> = [];
@@ -107,7 +110,7 @@ export class CocosMigrationTool implements ICocosMigrationTool {
                 targetFolder = IEditorEnv.utils.mkTempDir();
                 tmpFolders.push(targetFolder);
             }
-            await this.readDir(task.sourceFolder, targetFolder, "");
+            await this.readDir(task.sourceFolder, targetFolder, "", task.ignoreFiles);
         }
 
         for (let folder of this._folders) {
@@ -145,6 +148,8 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         for (let folder of tmpFolders) {
             await fs.promises.rm(folder, { recursive: true, force: true });
         }
+
+        EditorEnv.scene.validateScene();
     }
 
     getAssetConversion(ext: string): ICocosAssetConversion | null {
@@ -206,7 +211,7 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         return fpath.join(assetsPath, "cc-internal");
     }
 
-    private async readDir(sourceFolder: string, targetFolder: string, folderRelativePath: string) {
+    private async readDir(sourceFolder: string, targetFolder: string, folderRelativePath: string, ignoreFiles?: Set<string>) {
         let folderFullPath = fpath.join(sourceFolder, folderRelativePath);
         let targetFolderFullPath = fpath.join(targetFolder, folderRelativePath);
         this._folders.add(targetFolderFullPath);
@@ -214,7 +219,7 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         let dirents = await fs.promises.readdir(folderFullPath, { withFileTypes: true });
         for (let dirent of dirents) {
             if (dirent.isDirectory()) {
-                await this.readDir(sourceFolder, targetFolder, folderRelativePath + "/" + dirent.name);
+                await this.readDir(sourceFolder, targetFolder, folderRelativePath + "/" + dirent.name, ignoreFiles);
                 continue;
             }
             let ext = fpath.extname(dirent.name);
@@ -230,7 +235,7 @@ export class CocosMigrationTool implements ICocosMigrationTool {
 
             let meta = await IEditorEnv.utils.readJsonAsync(metaFile);
             let conv = this.getAssetConversion(ext);
-            if (conv)
+            if (conv && (!ignoreFiles || !ignoreFiles.has(folderRelativePath ? (folderRelativePath + "/") : "" + dirent.name)))
                 this._items.push({ sourcePath, targetPath, conv, meta });
             this.allAssets.set(meta.uuid, { sourcePath, userData: meta.userData || {} });
 

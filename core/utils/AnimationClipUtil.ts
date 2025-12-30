@@ -221,7 +221,7 @@ export default class AnimationClipUtil {
             keyFrame.callbackFunData = onChange;
             keyFrame.callParams = [onChangeArg];
             (keyFrame as any).propertyChangePath = propertyChangePath;
-            //console.log("onChange:", onChange, onChangeArg, propNames.join("."));
+            //console.debug("onChange:", onChange, onChangeArg, propNames.join("."));
         }
 
         let ownerPathCount: number = ownerPaths.length;
@@ -248,7 +248,7 @@ export default class AnimationClipUtil {
         let cls: any = null;
         let isObject = true;
 
-        //console.log("propertyPath:", propertyPath, propType);
+        //console.debug("propertyPath:", propertyPath, propType);
 
         var type = propType[propertyPath];
 
@@ -517,7 +517,7 @@ export default class AnimationClipUtil {
 
             if (nodeMap.has(key)) {
                 //合并数据
-                //console.log("数据已经存在，合并数据就可以了");
+                //console.debug("数据已经存在，合并数据就可以了");
                 this.mergeData(key, keyData, nodeMap);
 
             } else {
@@ -581,7 +581,7 @@ export default class AnimationClipUtil {
                 if (keyNode.propertyOwner == changePropertyPath[0]) {
                     changePropertyPath.shift();
                 }
-                //console.log("ownerName:", ownerName);
+                //console.debug("ownerName:", ownerName);
             }
         }
 
