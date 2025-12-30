@@ -6,30 +6,30 @@ Shader3D Start
     shaderType:D3,
     supportReflectionProbe:false,
     uniformMap:{
-        // Outline Parameters - Cocos: lineWidth, depthBias, outlineColor (Pass 0 baseColor)
+        // Outline Parameters
         lineWidth: { type: Float, default: 10.0 },
         depthBias: { type: Float, default: 0.0 },
         outlineColor: { type: Color, default: [0.0, 0.0, 0.0, 1.0] },
         
-        // Tiling and Offset (Cocos: tilingOffset)
+        // Tiling and Offset
         tilingOffset: { type: Vector4, default: [1.0, 1.0, 0.0, 0.0] },
         
-        // Base Color (Cocos: mainColor/baseColor, mainTexture/baseColorMap)
-        baseColor: { type: Color, default: [0.6, 0.6, 0.6, 1.0] },
+        // Base Color - use Color type for editor color picker
+        baseColor: { type: Color, default: [1.0, 1.0, 1.0, 1.0] },
         mainTexture: { type: Texture2D, options: { define: "MAINTEXTURE" } },
         
         // Color Scale and Alpha Threshold
         colorScale: { type: Vector3, default: [1.0, 1.0, 1.0] },
         alphaThreshold: { type: Float, default: 0.5 },
         
-        // Shade Colors (Cocos: shadeColor1, shadeColor2)
+        // Shade Colors
         shadeColor1: { type: Color, default: [0.4, 0.4, 0.4, 1.0] },
         shadeColor2: { type: Color, default: [0.2, 0.2, 0.2, 1.0] },
         shadeMap1: { type: Texture2D, options: { define: "USE_1ST_SHADE_MAP" } },
         shadeMap2: { type: Texture2D, options: { define: "USE_2ND_SHADE_MAP" } },
         
-        // Specular (Cocos: specular - xyz: color, w: power)
-        specular: { type: Color, default: [1.0, 1.0, 1.0, 0.3] },
+        // Specular (xyz: color, w: power)
+        specular: { type: Color, default: [1.0, 1.0, 1.0, 0.0] },
         specularMap: { type: Texture2D, options: { define: "USE_SPECULAR_MAP" } },
         
         // Shade Parameters
@@ -107,7 +107,7 @@ void main()
     // lineWidth scaled for appropriate visual size
     // Cocos uses 0.001, but Laya coordinate system is different
     // Using 0.00001 to match visual appearance (Cocos lineWidth=10 ≈ Laya lineWidth=10)
-    float width = lineWidth * 0.00001;
+    float width = lineWidth * 0.00003;
     
     vec3 positionOS = vertex.positionOS;
     
@@ -153,12 +153,18 @@ void main()
 {
     // Outline uses outlineColor (default: black) instead of baseColor
     // This matches Cocos behavior where Pass 0 has its own baseColor property
-    vec4 color = outlineColor;
+    // Convert from linear back to gamma (Laya auto-converts Color uniforms to linear)
+    vec4 color = vec4(linearToGamma(outlineColor.rgb), outlineColor.a);
     
     // Get main light color for outline (like Cocos: baseColor * cc_mainLitColor)
     #ifdef DIRECTIONLIGHT
         DirectionLight dirLight = getDirectionLight(0, vec3(0.0));
         color.rgb *= dirLight.color;
+    #endif
+    
+    // Convert to linear before outputTransform
+    #ifdef GAMMACORRECT
+        color.rgb = gammaToLinear(color.rgb);
     #endif
     
     gl_FragColor = vec4(color.rgb, 1.0);
@@ -259,6 +265,8 @@ struct ToonSurface {
     float shadowCover;
 };
 
+// Note: linearToGamma is already defined in Color.glsl
+
 // Get Main Direction Light
 void getMainDirectionLight(out vec3 lightColor, out vec3 lightDir, in vec3 positionWS)
 {
@@ -295,9 +303,12 @@ vec4 ToonShading(ToonSurface s)
     vec3 H = normalize(V + L);
     float NH = 0.5 * dot(H, N) + 0.5;
     
+    // Convert light color from linear to gamma space for toon shading
+    // Laya's light system uses linear space, but toon shading works better in gamma
+    vec3 litColorGamma = linearToGamma(lightColor);
+    
     // Light color multiplied by baseStep (matching Cocos behavior)
-    // In Cocos: vec3 lightColor = cc_mainLitColor.rgb * cc_mainLitColor.w * s.baseStep;
-    vec3 litColor = lightColor * s.baseStep;
+    vec3 litColor = litColorGamma * s.baseStep;
 
     // Toon Diffuse: Two-step shade transition
     // Step 1: Calculate blend factor for shade1 -> shade2 transition
@@ -322,6 +333,20 @@ vec4 ToonShading(ToonSurface s)
     
     vec3 finalColor = litColor * dirlightContrib;
     finalColor += s.emissive;
+    
+    // Boost brightness and saturation to match Cocos toon look
+    // Increase brightness
+    finalColor *= 1.3;
+    
+    // Increase saturation
+    float luminance = dot(finalColor, vec3(0.299, 0.587, 0.114));
+    finalColor = mix(vec3(luminance), finalColor, 1.4);
+    
+    // Increase contrast
+    finalColor = (finalColor - 0.5) * 1.2 + 0.5;
+    
+    // Clamp to valid range
+    finalColor = max(finalColor, vec3(0.0));
 
     return vec4(finalColor, s.baseColor.a);
 }
@@ -331,27 +356,28 @@ void initToonSurface(out ToonSurface s)
 {
     vec2 uv = v_UV;
 
-    // Shade colors
-    s.shade2 = shadeColor2.rgb * colorScale;
+    // Shade colors - convert from linear back to gamma for toon shading
+    // Laya auto-converts Color uniforms to linear, but toon shading works better in gamma space
+    s.shade2 = linearToGamma(shadeColor2.rgb) * colorScale;
     #ifdef USE_2ND_SHADE_MAP
         vec4 shadeMap2Sample = texture2D(shadeMap2, uv);
-        s.shade2 *= gammaToLinear(shadeMap2Sample.rgb);
+        s.shade2 *= shadeMap2Sample.rgb;
     #endif
 
-    s.shade1 = shadeColor1.rgb * colorScale;
+    s.shade1 = linearToGamma(shadeColor1.rgb) * colorScale;
     #ifdef USE_1ST_SHADE_MAP
         vec4 shadeMap1Sample = texture2D(shadeMap1, uv);
-        s.shade1 *= gammaToLinear(shadeMap1Sample.rgb);
+        s.shade1 *= shadeMap1Sample.rgb;
         #ifdef SHADE_MAP_1_AS_SHADE_MAP_2
             s.shade2 *= s.shade1;
         #endif
     #endif
 
-    // Base color
-    vec4 localBaseColor = baseColor;
+    // Base color - convert from linear back to gamma for toon shading
+    vec4 localBaseColor = vec4(linearToGamma(baseColor.rgb), baseColor.a);
     #ifdef MAINTEXTURE
         vec4 mainTextureSample = texture2D(mainTexture, uv);
-        mainTextureSample.rgb = gammaToLinear(mainTextureSample.rgb);
+        // Textures are already in gamma space, use directly
         localBaseColor *= mainTextureSample;
         #ifdef BASE_COLOR_MAP_AS_SHADE_MAP_1
             s.shade1 *= mainTextureSample.rgb;
@@ -385,18 +411,18 @@ void initToonSurface(out ToonSurface s)
 
     s.position = v_PositionWS;
 
-    // Specular
-    s.specular = specular;
+    // Specular - convert from linear back to gamma
+    s.specular = vec4(linearToGamma(specular.rgb), specular.a);
     #ifdef USE_SPECULAR_MAP
         vec4 specularMapSample = texture2D(specularMap, uv);
-        s.specular.rgb *= gammaToLinear(specularMapSample.rgb);
+        s.specular.rgb *= specularMapSample.rgb;
     #endif
 
-    // Emissive
-    s.emissive = emissive.rgb * emissiveScale;
+    // Emissive - convert from linear back to gamma
+    s.emissive = linearToGamma(emissive.rgb) * emissiveScale;
     #ifdef USE_EMISSIVE_MAP
         vec4 emissiveMapSample = texture2D(emissiveMap, uv);
-        s.emissive *= gammaToLinear(emissiveMapSample.rgb);
+        s.emissive *= emissiveMapSample.rgb;
     #endif
 
     // Shade parameters
@@ -418,6 +444,12 @@ void main()
         color.rgb = sceneLitFog(color.rgb);
     #endif
 
+    // Toon shading is done in gamma space for better color contrast
+    // Convert to linear before outputTransform (which will convert back to gamma)
+    #ifdef GAMMACORRECT
+        color.rgb = gammaToLinear(color.rgb);
+    #endif
+    
     gl_FragColor = color;
     gl_FragColor = outputTransform(gl_FragColor);
 }

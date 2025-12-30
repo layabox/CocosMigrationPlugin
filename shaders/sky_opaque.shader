@@ -8,7 +8,7 @@ Shader3D Start
     uniformMap:{
         u_Texture: { type: Texture2D },
         u_TintColor: { type: Color, default: [1.0, 1.0, 1.0, 1.0] },
-        u_Rotation: { type: Float, default: 0.0 },
+        u_Rotation: { type: Float, default: 0.0,step:1 },
         u_Exposure: { type: Float, default: 1.0 }
     },
     attributeMap:{
@@ -48,7 +48,7 @@ void main()
 	vec4 position = rotateAroundYInDegrees(a_Position, u_Rotation);
 	
 
-	v_Texcoord=vec3(-a_Position.x,-a_Position.y,a_Position.z);// NOTE: -a_Position.x convert coords system
+	v_Texcoord=vec3(a_Position.x,-a_Position.y,-a_Position.z);// NOTE: Rotate 180 degrees to match Cocos default orientation
 
 	// Calculate constant horizontal scale and cutoff for 180 (vs 360) image type
 	v_Image180ScaleAndCutoff = vec2(1.0, 1.0);// 360 degree mode

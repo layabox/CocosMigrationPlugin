@@ -5,9 +5,77 @@ import path from "path";
 
 type AnyRecord = Record<string, any> | undefined | null;
 
-// 固定的天空盒材质 UUID（每次转换都使用相同的 UUID）
-const SKYBOX_MATERIAL_UUID_SKY_PANORAMIC = "327109c9-c01d-4fb8-b731-336d9e54d28d"; // SkyPanoramic 材质 UUID
-const SKYBOX_MATERIAL_UUID_SKY_BOX = "a1b2c3d4-e5f6-7890-abcd-ef1234567890"; // SkyBox 材质 UUID（如果需要）
+/**
+ * 生成 UUID v4 格式的字符串（简单实现）
+ */
+function generateUUID(): string {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+        const r = Math.random() * 16 | 0;
+        const v = c === 'x' ? r : (r & 0x3 | 0x8);
+        return v.toString(16);
+    });
+}
+
+/**
+ * 比较两个天空盒材质的关键参数是否相同
+ * @param existingMaterial 现有材质数据
+ * @param newMaterial 新材质数据
+ * @returns 如果参数相同返回 true，否则返回 false
+ */
+function compareSkyboxMaterialParams(existingMaterial: any, newMaterial: any): boolean {
+    if (!existingMaterial || !newMaterial) {
+        return false;
+    }
+
+    const existingProps = existingMaterial.props || {};
+    const newProps = newMaterial.props || {};
+
+    // 比较旋转角度
+    const existingRotation = existingProps.u_Rotation ?? 0;
+    const newRotation = newProps.u_Rotation ?? 0;
+    if (Math.abs(existingRotation - newRotation) > 0.001) {
+        return false;
+    }
+
+    // 比较曝光度
+    const existingExposure = existingProps.u_Exposure ?? 1.3;
+    const newExposure = newProps.u_Exposure ?? 1.3;
+    if (Math.abs(existingExposure - newExposure) > 0.001) {
+        return false;
+    }
+
+    // 比较色调颜色
+    const existingTintColor = existingProps.u_TintColor ?? [0.5, 0.5, 0.5, 1];
+    const newTintColor = newProps.u_TintColor ?? [0.5, 0.5, 0.5, 1];
+    if (existingTintColor.length !== newTintColor.length) {
+        return false;
+    }
+    for (let i = 0; i < existingTintColor.length; i++) {
+        if (Math.abs(existingTintColor[i] - newTintColor[i]) > 0.001) {
+            return false;
+        }
+    }
+
+    // 比较纹理路径（UUID）
+    const existingTexture = existingProps.textures?.[0];
+    const newTexture = newProps.textures?.[0];
+    if (!existingTexture || !newTexture) {
+        return false;
+    }
+
+    const existingTexturePath = existingTexture.path || "";
+    const newTexturePath = newTexture.path || "";
+
+    // 提取 UUID（从 res://uuid 格式中提取）
+    const existingUuid = existingTexturePath.replace("res://", "");
+    const newUuid = newTexturePath.replace("res://", "");
+
+    if (existingUuid !== newUuid) {
+        return false;
+    }
+
+    return true;
+}
 
 /**
  * 转换 Cocos 的 SkyboxInfo 到 Laya 的 skyRenderer
@@ -51,7 +119,7 @@ export function convertSkyboxToLaya(
     if (skyboxInfo._editableMaterial) {
         const editableMat = skyboxInfo._editableMaterial;
         let editableMatUuid: string | undefined = undefined;
-        
+
         if (typeof editableMat === "string") {
             editableMatUuid = editableMat;
         } else if (editableMat.__uuid__) {
@@ -69,10 +137,10 @@ export function convertSkyboxToLaya(
     // 2. 如果没有可编辑材质，从环境贴图创建天空盒材质
     if (!materialUuid || !useEditableMaterial) {
         // 优先使用 HDR 环境贴图，然后是普通，最后是 LDR
-        const envmap = skyboxInfo._useHDR 
+        const envmap = skyboxInfo._useHDR
             ? (skyboxInfo._envmapHDR ?? skyboxInfo._envmap)
             : (skyboxInfo._envmap ?? skyboxInfo._envmapLDR);
-        
+
         if (envmap) {
             let envmapUuid: string | undefined = undefined;
             if (typeof envmap === "string") {
@@ -99,10 +167,10 @@ export function convertSkyboxToLaya(
     if (materialUuid) {
         // materialUuid 已经是材质文件的 UUID（如果是新创建的材质，createSkyboxMaterial 返回的是 resolvedUuid）
         // 如果是可编辑材质，需要格式化
-        const resolvedUuid = useEditableMaterial 
-            ? formatUuid(materialUuid, owner) 
+        const resolvedUuid = useEditableMaterial
+            ? formatUuid(materialUuid, owner)
             : materialUuid; // 新创建的材质已经返回了 resolvedUuid
-        
+
         skyRenderer.material = {
             "_$uuid": resolvedUuid,
             "_$type": "Material"
@@ -227,14 +295,11 @@ function createSkyboxMaterial(
     // 确定材质类型
     // 使用 sky_opaque shader（基于 SkyPanoramic 逻辑，支持 Texture2D 全景图）
     const materialType = "sky_opaque";
-    
-    // 使用固定的 UUID（每次转换都使用相同的 UUID）
-    const materialUuid = SKYBOX_MATERIAL_UUID_SKY_PANORAMIC;
 
     // 获取旋转角度
     const rotationAngle = skyboxInfo._rotationAngle ?? skyboxInfo.rotationAngle ?? 0;
 
-    // 创建材质数据
+    // 创建材质数据（用于比较和创建）
     // 渲染状态参考 SkyPanoramicShaderInit.ts
     const materialData: any = {
         version: "LAYAMATERIAL:04",
@@ -264,7 +329,7 @@ function createSkyboxMaterial(
     materialData.props.u_TintColor = [0.5, 0.5, 0.5, 1];
     materialData.props.u_Exposure = 1.3;
     materialData.props.u_Rotation = rotationAngle;
-    
+
     // 添加纹理引用（使用环境贴图的 UUID）
     materialData.props.textures.push({
         path: `res://${resolvedEnvmapUuid}`, // 使用环境贴图的 UUID
@@ -278,7 +343,6 @@ function createSkyboxMaterial(
         name: "u_Texture"
     });
 
-    // 创建材质文件（保存到 internal 文件夹）
     // 获取 assets 路径（从 EditorEnv 或 owner 中获取）
     let assetsPath: string | undefined = undefined;
     if (typeof EditorEnv !== "undefined" && EditorEnv.assetsPath) {
@@ -299,34 +363,79 @@ function createSkyboxMaterial(
             }
         }
     }
-    
-    if (assetsPath) {
-        // 保存到 internal 文件夹
-        const internalDir = path.join(assetsPath, "cc-internal");
-        const materialFileName = `${materialUuid}.lmat`;
-        const materialPath = path.join(internalDir, materialFileName);
-        
-        // 确保 internal 目录存在
-        if (!fs.existsSync(internalDir)) {
-            fs.mkdirSync(internalDir, { recursive: true });
-        }
-        
-        // 异步写入材质文件（需要在 complete 阶段执行）
-        // 这里我们将材质数据存储到 owner 中，在 complete 阶段写入
-        if (!owner._pendingSkyboxMaterials) {
-            owner._pendingSkyboxMaterials = [];
-        }
-        owner._pendingSkyboxMaterials.push({
-            path: materialPath,
-            data: materialData,
-            uuid: materialUuid
-        });
-    } else {
+
+    if (!assetsPath) {
         console.warn("Skybox: Cannot determine assets path, skybox material will not be saved");
+        // 返回一个临时 UUID，虽然材质文件不会保存，但至少不会报错
+        return generateUUID();
     }
 
-    // 返回材质文件的 UUID（新生成的 UUID），这样 skyRenderer 可以使用正确的材质 UUID
-    return materialUuid;
+    // 固定的天空盒材质存储目录
+    const internalDir = path.join(assetsPath, "cc-internal", "skybox_materials");
+
+    // 确保 internal 目录存在
+    if (!fs.existsSync(internalDir)) {
+        fs.mkdirSync(internalDir, { recursive: true });
+    }
+
+    // 第一步：扫描固定目录下的所有天空盒材质，查找匹配的材质
+    let matchedMaterialUuid: string | undefined = undefined;
+
+    try {
+        if (fs.existsSync(internalDir)) {
+            const files = fs.readdirSync(internalDir);
+            for (const file of files) {
+                if (file.endsWith(".lmat")) {
+                    const materialPath = path.join(internalDir, file);
+                    try {
+                        const existingMaterial = JSON.parse(fs.readFileSync(materialPath, "utf-8"));
+                        // 检查是否是 sky_opaque 类型的材质
+                        if (existingMaterial.props?.type === "sky_opaque") {
+                            // 比较参数
+                            if (compareSkyboxMaterialParams(existingMaterial, materialData)) {
+                                // 找到匹配的材质，直接返回其 UUID
+                                matchedMaterialUuid = path.basename(file, ".lmat");
+                                console.log(`Skybox: Found matching material ${matchedMaterialUuid}, reusing it`);
+                                break;
+                            }
+                        }
+                    } catch (error) {
+                        // 忽略读取失败的文件
+                        continue;
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        // 如果读取目录失败，继续创建新材质
+        console.warn("Skybox: Failed to scan existing materials:", error);
+    }
+
+    // 第二步：如果找到匹配的材质，直接返回其 UUID
+    if (matchedMaterialUuid) {
+        return matchedMaterialUuid;
+    }
+
+    // 第三步：如果没有找到匹配的材质，创建新的材质文件
+    const newMaterialUuid = generateUUID();
+    const materialFileName = `${newMaterialUuid}.lmat`;
+    const materialPath = path.join(internalDir, materialFileName);
+
+    // 异步写入材质文件（需要在 complete 阶段执行）
+    // 这里我们将材质数据存储到 owner 中，在 complete 阶段写入
+    if (!owner._pendingSkyboxMaterials) {
+        owner._pendingSkyboxMaterials = [];
+    }
+    owner._pendingSkyboxMaterials.push({
+        path: materialPath,
+        data: materialData,
+        uuid: newMaterialUuid
+    });
+
+    console.log(`Skybox: Created new material ${newMaterialUuid} with different parameters`);
+
+    // 返回新创建的材质 UUID
+    return newMaterialUuid;
 }
 
 /**
@@ -356,7 +465,7 @@ export function convertAmbientToLaya(
         let r = skyColor.x ?? skyColor.r ?? 0;
         let g = skyColor.y ?? skyColor.g ?? 0;
         let b = skyColor.z ?? skyColor.b ?? 0;
-        
+
         // 如果值在 0-255 范围内，需要转换为 0-1 范围
         // Cocos 的 _skyColorLDR 通常是 0-1 范围，_skyColor 和 _skyColorHDR 可能是 0-255 范围
         if (r > 1 || g > 1 || b > 1) {
@@ -364,12 +473,12 @@ export function convertAmbientToLaya(
             g = g / 255;
             b = b / 255;
         }
-        
+
         // 确保值在 0-1 范围内
         r = Math.max(0, Math.min(1, r));
         g = Math.max(0, Math.min(1, g));
         b = Math.max(0, Math.min(1, b));
-        
+
         // 直接创建 Laya 颜色格式，alpha 固定为 1
         scene3DNode.ambientColor = {
             "_$type": "Color",
