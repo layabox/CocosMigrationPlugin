@@ -21,7 +21,13 @@ export class ModelConversion implements ICocosAssetConversion {
         if (meta.userData && meta.userData.imageMetas && Array.isArray(meta.userData.imageMetas)) {
             for (let imageMeta of meta.userData.imageMetas) {
                 if (imageMeta.uri && imageMeta.name) {
-                    internalUUIDMap[imageMeta.uri] = fpath.join(targetPath, imageMeta.name)
+                    let uri = imageMeta.uri;
+                    let name = imageMeta.name;
+                    if (null != imageMeta.remap) {
+                        uri = imageMeta.remap;
+                        name = fpath.basename(imageMeta.uri);
+                    }
+                    internalUUIDMap[uri] = fpath.join(targetPath, name)
                 }
             }
         }
@@ -36,7 +42,7 @@ export class ModelConversion implements ICocosAssetConversion {
                     let textureUuid = subMeta.uuid;
                     let imageUuidOrDatabaseUri = subMeta.userData.imageUuidOrDatabaseUri;
                     const path = internalUUIDMap[imageUuidOrDatabaseUri];
-                    if(path && textureUuid){
+                    if (path && textureUuid) {
                         internalUUIDMap[textureUuid] = path;
                     }
                 }
@@ -113,7 +119,11 @@ export class ModelConversion implements ICocosAssetConversion {
             if (this.owner.cocosProjectRoot) {
                 let scenePath = `${this.owner.cocosProjectRoot}/library/${sceneAssetId.substring(0, 2)}/${sceneAssetId}.json`;
                 let elements = await IEditorEnv.utils.readJsonAsync(scenePath);
-                (this.owner.getAssetConversion("prefab") as PrefabConversion).parseElements(elements);
+                if (elements) {
+                    (this.owner.getAssetConversion("prefab") as PrefabConversion).parseElements(elements);
+                } else {
+                    console.warn(`Scene asset not found: ${scenePath}`);
+                }
             }
         }
     }
