@@ -1,50 +1,73 @@
 ## CocosMigrationPlugin
 
-一个用于将 **Cocos Creator 项目资源** 迁移到 LayaAir 的**LayaAir插件**。
+A **LayaAir plugin** for migrating **Cocos Creator project assets** to LayaAir.
 
-插件通过扫描 Cocos 工程中的资源与 meta 文件，把支持的资源类型转换为 Laya 的资源格式，并自动处理常见组件（UI、网格、灯光、相机、碰撞体、刚体、动画等）。
+The plugin scans assets and meta files in a Cocos project, converts supported asset types into Laya formats, and automatically handles common components (UI, mesh, light, camera, collider, rigid body, animation, etc.).
 
----
-
-## 环境要求
-
-- LayaAir 版本：3.3.6或以上版本
-- Cocos 版本：已知支持 Cocos Creator 3.x 系列，2.x 系列未测试，但理论上也能支持
+> 中文版说明请参见 [README.zh-CN.md](README.zh-CN.md)
 
 ---
 
-## 使用方法
+## Requirements
 
-1. 下载本插件后，放置到Laya项目的assets目录下任意位置即可
-2. 在主菜单中找到：`迁移Cocos / 迁移Cocos项目资源`
-3. 按提示完成迁移：
-	 - 第一个对话框：选择 **源 Cocos 资源目录**（通常是 Cocos 工程下的 `assets` 目录，也可以是其子目录）
-	 - 第二个对话框：选择 **目标 Laya 资源目录**（必须是当前 Laya 工程 `assets` 目录中的某个子目录）
-4. 等待转换完成，查看 Laya 控制台输出以了解迁移进度及可能的警告
+- LayaAir: 3.3.6 or higher
+- Cocos: Verified with Cocos Creator 3.x; 2.x is not tested, but should work in theory
 
 ---
 
-## 已知局限与注意事项
+## Usage
 
-- 仅转换已在 `core/Registry.ts` 中注册的扩展名，其它类型会被忽略或仅打印警告
-- 某些 Cocos 特有的组件/材质参数在 Laya 中可能没有一一对应映射，需手动调整
-- 不支持转换自定义的Effect
-- 物理参数（质量、摩擦、弹性等）与引擎实现差异可能导致运行效果与原项目不完全一致
-
----
-
-## 扩展与二次开发
-
-如果你希望支持更多资源类型或自定义转换逻辑，可以参考：
-
-- 新增资源转换：
-	- 在 `core/assets` 中新增一个实现 `ICocosAssetConversion` 接口的转换类
-	- 在 `core/Registry.ts` 的 `ConversionRegistry` 中注册扩展名与转换类映射
-- 新增/修改组件转换：
-	- 在 `core/components` 下新增或修改对应组件转换文件
+1. Download this plugin and place it anywhere under the `assets` directory of your Laya project.
+2. In the main menu, find: `Migrate Cocos / Migrate Cocos Project Assets` (迁移Cocos / 迁移Cocos项目资源).
+3. Follow the prompts:
+	 - First dialog: select the **source Cocos asset folder** (usually the `assets` directory under the Cocos project, or any of its subfolders).
+	 - Second dialog: select the **target Laya asset folder** (must be a subfolder inside the current Laya project's `assets` directory).
+4. Wait for the conversion to finish and check the Laya console output for progress and possible warnings.
 
 ---
 
-## 许可协议
+## Known Limitations & Notes
 
-本插件使用 MIT License，详情见仓库根目录下的 `LICENSE`（如有）。
+- File conversion support
+	1. Conversion of `AnimationClip` files and animation state machine files.
+	2. Conversion of model files: `fbx`, `gltf`, `glb`, and `obj`.
+	3. Basic conversion of `effect` assets (only the rough structure is converted; you will still need to adjust details manually).
+	4. Conversion of `mtl` material files.
+	5. Conversion of prefab and scene files.
+
+- Component conversion support
+	1. UI components (`cc.Canvas`, `cc.Widget`, `cc.UITransform`, `cc.Button`, `cc.Label`, `cc.Sprite`, `cc.ScrollView`, etc.).
+	2. Animation components: `cc.Animation`, `cc.SkeletalAnimation`, `cc.animation.AnimationController` (note: for FBX assets using "Promote Single Root Node" that generate a `RootNode`, animations may be offset and fail to play correctly).
+	3. Physics components: `cc.BoxCollider`, `cc.CapsuleCollider`, `cc.ConeCollider`, `cc.CylinderCollider`, `cc.RigidBody`, `cc.SphereCollider`.
+	4. `cc.Camera`.
+	5. Lights: `cc.DirectionalLight`, `cc.PointLight`, `cc.SpotLight`.
+	6. `cc.Line`.
+	7. `cc.ReflectionProbe`.
+	8. `cc.LODGroup`.
+	9. `cc.MeshCollider`, `cc.MeshRenderer`.
+	10. `cc.SkinnedMeshRenderer`.
+
+- Shader conversion support
+	1. `builtin-standard`
+	2. `sky`
+	3. `standard`
+	4. `toon`
+
+---
+
+## Extension & Customization
+
+If you want to support more asset types or customize the conversion logic, you can:
+
+- Add new asset converters:
+	- In `core/assets`, add a new class that implements the `ICocosAssetConversion` interface.
+	- Register the file extension and converter mapping in `core/Registry.ts` via `ConversionRegistry`.
+- Add/modify component converters:
+	- Add or modify the corresponding component converter files under `core/components`.
+
+---
+
+## License
+
+This plugin is released under the MIT License.
+
