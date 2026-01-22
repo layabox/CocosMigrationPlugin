@@ -87,6 +87,17 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         this.projectConfig = projectConfig;
 
         let internalAssetsFolder = options.cocosInternalAssetsFolder;
+        
+        // 检测 internalAssetsFolder 是否存在
+        if (internalAssetsFolder) {
+            if (!fs.existsSync(internalAssetsFolder)) {
+                throw new Error(
+                    `内部资源文件夹不存在: ${internalAssetsFolder}\n` +
+                    `请先用 Cocos Creator IDE 打开项目，然后再进行转换。\n` +
+                    `Cocos Creator IDE 会在首次打开项目时更新内部资源文件夹路径。`
+                );
+            }
+        }
         if (!internalAssetsFolder && cocosProjectRoot) {
             let tsconfig = await IEditorEnv.utils.readJsonAsync(fpath.join(cocosProjectRoot, "temp", "tsconfig.cocos.json"));
             if (tsconfig) {
