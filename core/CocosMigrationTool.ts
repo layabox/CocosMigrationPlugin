@@ -95,7 +95,19 @@ export class CocosMigrationTool implements ICocosMigrationTool {
             }
         }
 
+        // 检测 internalAssetsFolder 是否存在
+        if (internalAssetsFolder) {
+            if (!fs.existsSync(internalAssetsFolder)) {
+                throw new Error(
+                    `内部资源文件夹不存在: ${internalAssetsFolder}\n` +
+                    `请先用 Cocos Creator IDE 打开项目，然后再进行转换。\n` +
+                    `Cocos Creator IDE 会在首次打开项目时更新内部资源文件夹路径。`
+                );
+            }
+        }
+
         if (internalAssetsFolder && tasks.findIndex(t => t.sourceFolder == internalAssetsFolder) === -1) {
+
             //console.warn("临时去掉内部资源迁移，需要的时候再打开");
             tasks = tasks.concat({ sourceFolder: internalAssetsFolder, targetFolder: this.getCCInternalPath() });
         }
