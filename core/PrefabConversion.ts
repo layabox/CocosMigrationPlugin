@@ -1,6 +1,9 @@
 import { ICocosAssetConversion, ICocosMigrationTool } from "./ICocosMigrationTool";
 import { getComponentParser, registerComponentParser as registerExternalComponentParser } from "./ComponentParserRegistry";
-import { convertSkyboxToLaya, extractSkyboxInfo, extractAmbientInfo, extractFogInfo, convertAmbientToLaya, convertFogToLaya } from "./components/SkyboxConversion";
+import { convertSkyboxToLaya, extractSkyboxInfo, extractAmbientInfo, extractFogInfo, extractShadowsInfo, convertAmbientToLaya, convertFogToLaya } from "./components/SkyboxConversion";
+import fpath from "path";
+import fs from "fs";
+import { logger } from "./Logger";
 
 export class PrefabConversion implements ICocosAssetConversion {
     /** 允许外部模块注册额外的组件解析器。 */
@@ -16,6 +19,7 @@ export class PrefabConversion implements ICocosAssetConversion {
     private elements: Array<any>;
     private inCanvas: number;
     private currentTargetPath: string | undefined; // 保存当前转换的目标路径
+    shadowsInfo: any; // 场景级阴影设置（cc.ShadowsInfo），供组件解析器访问
 
     constructor(private owner: ICocosMigrationTool) {
     }
@@ -28,14 +32,27 @@ export class PrefabConversion implements ICocosAssetConversion {
 
         let node = this.parseElements(elements);
 
-        if (this.overrides.length > 0)
+        if (this.overrides.length > 0) {
             this.rewriteTasks.set(targetPath, { data: node, overrides: this.overrides, elements, nodeMap: this.nodeMap });
+        }
 
-        await IEditorEnv.utils.writeJsonAsync(targetPath, node);
-        await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", { uuid: meta.uuid });
-
-        // 写入待处理的天空盒材质文件
+        // 先写入材质文件（在 .lh 之前），确保 IDE 能先索引材质 UUID
         await this.writePendingSkyboxMaterials();
+        await this.writePendingParticleMaterials();
+
+        // 对于 .ls 场景文件，使用 fs.writeFileSync 直接写入，
+        // 绕过 IDE 的 writeJsonAsync（它基于 _$type schema 过滤属性，会丢失 Scene3D 的 ambient/fog 等）
+        // 对于 .lh 预制体文件，必须使用 writeJsonAsync 以触发 IDE 资源索引
+        if (targetPath.endsWith(".ls")) {
+            fs.writeFileSync(targetPath, JSON.stringify(node, null, 2), "utf-8");
+            fs.writeFileSync(targetPath + ".meta", JSON.stringify({ uuid: meta.uuid }), "utf-8");
+        } else {
+            await IEditorEnv.utils.writeJsonAsync(targetPath, node);
+            fs.writeFileSync(targetPath + ".meta", JSON.stringify({ uuid: meta.uuid }), "utf-8");
+        }
+
+        // 写入待处理的 2D 动画控制器文件
+        await this.writePendingAnimation2DControllers();
     }
 
     parseElements(elements: Array<any>): any {
@@ -50,6 +67,14 @@ export class PrefabConversion implements ICocosAssetConversion {
         let ccAsset = elements[0];
         //ccAsset.name
 
+        // 提前提取场景级阴影设置，供灯光组件解析器使用
+        const sceneElement = elements[1];
+        if (sceneElement && sceneElement.__type__ === "cc.Scene") {
+            this.shadowsInfo = extractShadowsInfo(sceneElement, this.elements);
+        } else {
+            this.shadowsInfo = null;
+        }
+
         // 第一阶段：解析所有节点（包括子节点），但不解析组件
         let node = this.parseNode(null, 1);
         node = Object.assign({ "_$ver": 1 }, node);
@@ -58,6 +83,8 @@ export class PrefabConversion implements ICocosAssetConversion {
             let children: any[] = node._$child;
             if (children) {
                 let scene3dNode: any;
+
+                // 第一步：从根节点的直接子节点中提取 3D 节点
                 for (let i = 0, n = children.length; i < n; i++) {
                     let child = children[i];
                     if (!child._$type || EditorEnv.typeRegistry.isDerivedOf(child._$type, "Sprite3D")) {
@@ -75,30 +102,57 @@ export class PrefabConversion implements ICocosAssetConversion {
                         n--;
                     }
                 }
+                
+                // 第二步：递归检查所有 2D 节点，提取其中嵌套的 3D 节点
+                const extracted3DNodes: any[] = [];
+                for (let child of children) {
+                    this.extractNested3DNodes(child, extracted3DNodes);
+                }
+                
+                // 如果有嵌套的 3D 节点，确保 Scene3D 存在并添加这些节点
+                if (extracted3DNodes.length > 0) {
+                    if (!scene3dNode) {
+                        scene3dNode = {
+                            "_$id": IEditorEnv.utils.genShortId(),
+                            "_$type": "Scene3D",
+                            "name": "Scene3D",
+                            "_$child": []
+                        };
+                    }
+                    for (let node3d of extracted3DNodes) {
+                        scene3dNode._$child.push(node3d);
+                    }
+                }
+                
                 if (scene3dNode) {
                     children.unshift(scene3dNode);
 
                     // 转换场景全局设置：从场景的 _globals 中提取各种信息
-                    const sceneData = this.elements[1]; // 场景数据通常是第二个元素（索引1）
+                    const sceneData = this.elements[1];
                     if (sceneData && sceneData.__type__ === "cc.Scene") {
                         // 转换 skybox
                         const skyboxInfo = extractSkyboxInfo(sceneData, this.elements);
                         if (skyboxInfo) {
-                            // 传递目标场景路径（用于保存材质文件）
                             convertSkyboxToLaya(skyboxInfo, scene3dNode, this.owner, this.currentTargetPath);
                         }
 
-                        // 转换环境光照 (EnvironmentLighting)
+                        // 转换环境光照
                         const ambientInfo = extractAmbientInfo(sceneData, this.elements);
                         if (ambientInfo) {
                             convertAmbientToLaya(ambientInfo, scene3dNode);
                         }
 
-                        // 转换雾效 (Fog)
+                        // 转换雾效
                         const fogInfo = extractFogInfo(sceneData, this.elements);
                         if (fogInfo) {
                             convertFogToLaya(fogInfo, scene3dNode);
                         }
+
+                        // 重构 Scene3D 对象：确保属性在 _$child 之前
+                        // LayaAir 反序列化器要求属性在 _$child 之前才能正确读取
+                        const savedChild = scene3dNode._$child;
+                        delete scene3dNode._$child;
+                        scene3dNode._$child = savedChild;
                     }
                 }
             }
@@ -128,9 +182,72 @@ export class PrefabConversion implements ICocosAssetConversion {
 
             for (let info of overrides) {
                 let targetInfo = this.overrideTargets.get(info.targetId);
-                if (!targetInfo) {
-                    console.warn(`cannot find override target: ${info.targetId} in ${targetPath}`);
-                    continue;
+                
+                // 检查是否是组件属性覆盖（如 _materials, _mesh 等）
+                const compPropertyMap: Record<string, string> = {
+                    "_materials": "cc.MeshRenderer",
+                    "_mesh": "cc.MeshRenderer",
+                    "_shadowCastingMode": "cc.MeshRenderer",
+                    "_shadowReceivingMode": "cc.MeshRenderer",
+                };
+                
+                const propName = Array.isArray(info.propertyPath) ? info.propertyPath[0] : info.propertyPath;
+                const inferredType = compPropertyMap[propName];
+                
+                // 对于预制体实例的组件属性覆盖，需要重新查找预制体内部的节点 ID
+                // 因为 overrideTargets 中存储的是场景中临时创建的节点 ID，而不是预制体内部的节点 ID
+                if (info.instanceNode._$prefab && inferredType) {
+                    const prefabUuid = info.instanceNode._$prefab;
+                    
+                    // 组件属性覆盖：尝试从 LayaAir 预制体中获取节点 ID
+                    logger.debug("PrefabConversion", `Trying to find prefab node for component override: targetId=${info.targetId}, prefabUuid=${prefabUuid}, inferredType=${inferredType}`);
+                    const findResult = await this.findPrefabNodeIdByComponentFileId(prefabUuid, info.targetId, inferredType);
+                    logger.debug("PrefabConversion", `findPrefabNodeIdByComponentFileId returned: ${findResult ? `nodeId=${findResult.nodeId}, actualCompType=${findResult.actualCompType}` : 'null'}`);
+
+                    if (findResult) {
+                        // 使用预制体内部的节点 ID 创建 targetInfo
+                        // 强制使用 inferredType（如 cc.MeshRenderer）作为 compData.__type__，
+                        // 因为只有 MeshRendererConversion 支持 override 模式，
+                        // SkinnedMeshRendererConversion 会延迟到 hook 导致 props._$comp 为空
+                        // 但记录实际的 LayaAir 组件类型，用于后续创建正确的 override entry
+                        targetInfo = {
+                            node: { _$type: "Sprite3D", _$id: findResult.nodeId },
+                            parentNode: info.instanceNode,
+                            compData: { __type__: inferredType },
+                            actualLayaCompType: findResult.actualCompType
+                        };
+                        logger.debug("PrefabConversion", `Using prefab internal node ID: ${findResult.nodeId}, actualLayaCompType: ${findResult.actualCompType}`);
+                    } else if (!targetInfo) {
+                        logger.warn("PrefabConversion", `Cannot find prefab node for component fileId: ${info.targetId} in prefab ${prefabUuid}`);
+                        continue;
+                    }
+                }
+                // 如果找不到 targetInfo，尝试根据 propertyPath 推断
+                else if (!targetInfo) {
+                    if (info.instanceNode._$prefab) {
+                        const prefabUuid = info.instanceNode._$prefab;
+                        
+                        // 节点属性覆盖：尝试从 LayaAir 预制体中根据节点 fileId 获取节点 ID
+                        logger.debug("PrefabConversion", `Trying to find node for node property override: targetId=${info.targetId}, prefabUuid=${prefabUuid}, propName=${propName}`);
+                        const nodeId = await this.findPrefabNodeIdByNodeFileId(prefabUuid, info.targetId);
+                        
+                        if (nodeId) {
+                            // 创建一个虚拟的 targetInfo，用于处理节点属性覆盖
+                            targetInfo = {
+                                node: { _$type: "Sprite3D", _$id: nodeId },
+                                parentNode: info.instanceNode,
+                                compData: null
+                            };
+                            logger.debug("PrefabConversion", `Found prefab node ID: ${nodeId} for node fileId: ${info.targetId}`);
+                        } else {
+                            // 无法解析的覆写目标 → 跳过，防止错误地应用到根节点
+                            logger.debug("PrefabConversion", `Skipping unresolvable node override: targetId=${info.targetId}, propName=${propName}`);
+                            continue;
+                        }
+                    } else {
+                        logger.warn("PrefabConversion", `cannot find override target: ${info.targetId} in ${targetPath}, inferredType=${inferredType}, hasPrefab=${!!info.instanceNode._$prefab}`);
+                        continue;
+                    }
                 }
 
                 let instanceNode = info.instanceNode;
@@ -138,6 +255,7 @@ export class PrefabConversion implements ICocosAssetConversion {
                 let compData = targetInfo.compData;
                 let targetId = targetInfo.parentNode ? targetNode._$id : null;
                 let parentNode = targetInfo.parentNode || info.instanceNodeParent;
+                logger.debug("PrefabConversion", `Resolved: targetNode._$id=${targetNode._$id}, targetId=${targetId}, hasParentNode=${!!targetInfo.parentNode}, hasCompData=${!!compData}`);
 
                 let is2d = EditorEnv.typeRegistry.isDerivedOf(targetNode._$type, "Sprite");
 
@@ -151,13 +269,37 @@ export class PrefabConversion implements ICocosAssetConversion {
                     let props: any = { _$type: targetNode._$type, _$child: [], _$comp: [] };
                     if (info.propertyPath == "_$comp")
                         this.parseComponent(props, info.value, false, is2d);
-                    else
-                        this.parseComponent(props, { __type__: compData.__type__, [info.propertyPath[0]]: info.value }, true, is2d);
+                    else {
+                        // 处理数组属性覆盖，如 ["_materials", "0"] 表示覆盖 _materials[0]
+                        let propValue = info.value;
+                        if (info.propertyPath.length > 1) {
+                            // 如果 propertyPath 有多个元素，说明是数组/对象的子属性
+                            // 例如 ["_materials", "0"] 表示 _materials[0]
+                            const arrayIndex = parseInt(info.propertyPath[1]);
+                            if (!isNaN(arrayIndex)) {
+                                // 构造数组，将值放在正确的索引位置
+                                propValue = [];
+                                propValue[arrayIndex] = info.value;
+                            }
+                        }
+                        logger.debug("PrefabConversion", `Parsing component override: type=${compData.__type__}, propName=${info.propertyPath[0]}, propValue=${JSON.stringify(propValue)}`);
+                        this.parseComponent(props, { __type__: compData.__type__, [info.propertyPath[0]]: propValue }, true, is2d);
+                        logger.debug("PrefabConversion", `After parseComponent, props._$comp=${JSON.stringify(props._$comp)}`);
+                    }
                     if (props._$comp.length > 0) {
                         let comp = props._$comp[0];
-                        let entry = this.createOverrideEntry(instanceNode, targetId, comp._$type);
+                        // 如果实际组件类型与推断类型不同（如 SkinnedMeshRenderer vs MeshRenderer），
+                        // 使用实际类型创建 override entry，确保与预制体中的组件类型匹配
+                        let overrideCompType = comp._$type;
+                        if ((targetInfo as any)?.actualLayaCompType && (targetInfo as any).actualLayaCompType !== overrideCompType) {
+                            logger.debug("PrefabConversion", `Remapping comp type: ${overrideCompType} -> ${(targetInfo as any).actualLayaCompType}`);
+                            overrideCompType = (targetInfo as any).actualLayaCompType;
+                        }
+                        logger.debug("PrefabConversion", `Creating override entry: instanceNode._$id=${instanceNode._$id}, targetId=${targetId}, compType=${overrideCompType}`);
+                        let entry = this.createOverrideEntry(instanceNode, targetId, overrideCompType);
                         delete comp._$type;
                         IEditorEnv.utils.mergeObjs(entry, comp, true);
+                        logger.debug("PrefabConversion", `After merge, entry=${JSON.stringify(entry)}`);
 
                         if (info.propertyPath == "_$comp") {
                             entry._$type = entry._$override;
@@ -179,19 +321,29 @@ export class PrefabConversion implements ICocosAssetConversion {
             }
 
             this.nodeHooks.forEach(hook => hook());
-            await IEditorEnv.utils.writeJsonAsync(targetPath, data);
+            // 对于 .ls 场景文件，使用 fs.writeFileSync 直接写入（保留 Scene3D 属性）
+            // 对于 .lh 预制体文件，使用 writeJsonAsync 以触发 IDE 资源索引
+            if (targetPath.endsWith(".ls")) {
+                fs.writeFileSync(targetPath, JSON.stringify(data, null, 2), "utf-8");
+            } else {
+                await IEditorEnv.utils.writeJsonAsync(targetPath, data);
+            }
         }
     }
 
     private createOverrideEntry(prefabRootNode: any, targetId: string, compType?: string): any {
+        logger.debug("PrefabConversion", `createOverrideEntry: prefabRootNode._$id=${prefabRootNode._$id}, prefabRootNode._$prefab=${prefabRootNode._$prefab}, targetId=${targetId}, compType=${compType}`);
         let entry: any;
         if (targetId) {
             if (!prefabRootNode._$child)
                 prefabRootNode._$child = [];
-            entry = prefabRootNode._$child.find((c: any) => c._$id === targetId);
+            // 查找已存在的覆盖条目（通过 _$override 或 _$id 匹配）
+            entry = prefabRootNode._$child.find((c: any) => c._$override === targetId || c._$id === targetId);
+            logger.debug("PrefabConversion", `createOverrideEntry: Found existing entry: ${entry ? JSON.stringify(entry) : 'null'}`);
             if (!entry) {
                 entry = { _$override: targetId };
                 prefabRootNode._$child.push(entry);
+                logger.debug("PrefabConversion", `createOverrideEntry: Created new entry with _$override=${targetId}`);
             }
         }
         else
@@ -200,14 +352,72 @@ export class PrefabConversion implements ICocosAssetConversion {
             if (!entry._$comp)
                 entry._$comp = [];
             let comp = entry._$comp.find((c: any) => c._$override === compType);
+            logger.debug("PrefabConversion", `createOverrideEntry: Found existing comp: ${comp ? JSON.stringify(comp) : 'null'}`);
             if (!comp) {
                 comp = { _$override: compType };
                 entry._$comp.push(comp);
+                logger.debug("PrefabConversion", `createOverrideEntry: Created new comp with _$override=${compType}`);
             }
             return comp;
         }
         else
             return entry;
+    }
+
+    /**
+     * 递归提取嵌套在 2D 节点中的 3D 节点
+     * 在 LayaAir 中，3D 节点必须是 Scene3D 的子节点，不能嵌套在 2D 节点（如 GWidget）下
+     * @param node 当前检查的节点
+     * @param extracted3DNodes 用于收集提取出的 3D 节点的数组
+     */
+    private extractNested3DNodes(node: any, extracted3DNodes: any[]): void {
+        if (!node._$child || node._$child.length === 0) {
+            return;
+        }
+        
+        // 检查当前节点是否是 2D 节点
+        const is2DNode = node._$type && (
+            node._$type === "GWidget" ||
+            node._$type === "GImage" ||
+            node._$type === "GTextField" ||
+            node._$type === "GButton" ||
+            node._$type === "GBox" ||
+            node._$type === "GPanel" ||
+            node._$type === "GList" ||
+            node._$type === "GProgressBar" ||
+            node._$type === "GSlider" ||
+            node._$type === "GTextInput" ||
+            node._$type === "GLoader" ||
+            EditorEnv.typeRegistry.isDerivedOf(node._$type, "Sprite")
+        );
+        
+        if (is2DNode) {
+            // 从 2D 节点中提取 3D 子节点
+            const children = node._$child;
+            for (let i = children.length - 1; i >= 0; i--) {
+                const child = children[i];
+                const is3DChild = !child._$type || EditorEnv.typeRegistry.isDerivedOf(child._$type, "Sprite3D");
+                
+                if (is3DChild) {
+                    // 将 3D 节点从 2D 父节点中移除，并添加到提取列表
+                    console.warn(`[PrefabConversion] Extracting 3D node "${child.name || 'unnamed'}" from 2D parent "${node.name || 'unnamed'}"`);
+                    extracted3DNodes.push(child);
+                    children.splice(i, 1);
+                }
+            }
+            
+            // 如果移除后 _$child 为空，删除该属性
+            if (children.length === 0) {
+                delete node._$child;
+            }
+        }
+        
+        // 递归检查剩余的子节点
+        if (node._$child) {
+            for (const child of node._$child) {
+                this.extractNested3DNodes(child, extracted3DNodes);
+            }
+        }
     }
 
     private parseNode(parentNode: any, dataId: number): any {
@@ -222,13 +432,17 @@ export class PrefabConversion implements ICocosAssetConversion {
             if (prefabInst) {
                 node._$prefab = prefabInfo.asset.__uuid__.split("@")[0];
                 let propertyOverrides: any[] = prefabInst.propertyOverrides;
+                console.log(`[PrefabConversion] parseNode: prefab=${node._$prefab}, propertyOverrides.length=${propertyOverrides?.length || 0}`);
                 if (propertyOverrides?.length > 0) {
                     for (let idInfo of propertyOverrides) {
                         let info = elements[idInfo.__id__];
-                        if (!info.targetInfo)
+                        if (!info.targetInfo) {
+                            console.log(`[PrefabConversion] Skipping override without targetInfo: propertyPath=${JSON.stringify(info.propertyPath)}`);
                             continue;
+                        }
 
                         let targetId = elements[info.targetInfo.__id__].localID[0];
+                        console.log(`[PrefabConversion] Adding override: targetId=${targetId}, propertyPath=${JSON.stringify(info.propertyPath)}, value=${JSON.stringify(info.value)?.substring(0, 100)}`);
                         this.overrides.push({
                             targetId,
                             propertyPath: info.propertyPath,
@@ -348,6 +562,39 @@ export class PrefabConversion implements ICocosAssetConversion {
                 this.parseComponent(node, spriteData, false, is2d);
         }
 
+        // 修复 FBX 模型节点的缩放差异
+        // LayaAir 的 convertUnits=1 强制按厘米处理，但 FBX 的 UnitScaleFactor 可能不为 1
+        // Cocos 使用 UnitScaleFactor×0.01，LayaAir 固定 0.01，差异 = UnitScaleFactor
+        // 仅当 UnitScaleFactor != 1 时需要补偿（如英寸 FBX 的 USF=2.54）
+        if (!is2d && node._$comp) {
+            const meshFilterComp = node._$comp.find((c: any) => c._$type === "MeshFilter");
+            const hasSkinnedMeshRenderer = node._$comp.some((c: any) => c._$type === "SkinnedMeshRenderer");
+            if (meshFilterComp && !hasSkinnedMeshRenderer) {
+                const meshUuid = meshFilterComp.sharedMesh?._$uuid;
+                const fbxUuid = meshUuid?.split("@")[0];
+                const fbxAsset = fbxUuid ? this.owner.allAssets.get(fbxUuid) : null;
+                const unitScaleFactor = fbxAsset?.userData?.unitScaleFactor ?? 1;
+
+                if (unitScaleFactor !== 1) {
+                    if (!node.transform)
+                        node.transform = {};
+                    if (node.transform.localScale) {
+                        node.transform.localScale.x *= unitScaleFactor;
+                        node.transform.localScale.y *= unitScaleFactor;
+                        node.transform.localScale.z *= unitScaleFactor;
+                    } else {
+                        node.transform.localScale = {
+                            _$type: "Vector3",
+                            x: unitScaleFactor,
+                            y: unitScaleFactor,
+                            z: unitScaleFactor
+                        };
+                    }
+                    logger.debug("PrefabConversion", `Fixed FBX scale for ${node.name}: ×${unitScaleFactor} (UnitScaleFactor)`);
+                }
+            }
+        }
+
         if (data._children?.length > 0) {
             for (let idInfo of data._children) {
                 if (this.removedElements.has(idInfo.__id__))
@@ -391,11 +638,13 @@ export class PrefabConversion implements ICocosAssetConversion {
                 node.name = value;
                 break;
             case "_active":
+                logger.debug("PrefabConversion", `parseNodeProps _active: node=${node.name}, value=${value}, is2d=${is2d}, isOverride=${isOverride}`);
                 if (value === false || isOverride) {
                     if (is2d)
                         node.visible = value;
                     else
                         node.active = value;
+                    logger.debug("PrefabConversion", `Set active=${value} for node ${node.name}`);
                 }
                 break;
             case "_lpos":
@@ -1223,6 +1472,283 @@ export class PrefabConversion implements ICocosAssetConversion {
     }
 
     /**
+     * 从 LayaAir 预制体中查找包含指定组件的节点 ID
+     * 通过读取 Cocos 原始预制体文件，根据 fileId 找到节点名称，
+     * 然后在 LayaAir 转换后的预制体中通过节点名称匹配找到对应的 _$id
+     * @param prefabUuid 预制体 UUID
+     * @param componentFileId Cocos 组件的 fileId
+     * @param componentType 组件类型（如 cc.MeshRenderer）
+     * @returns LayaAir 预制体中节点的 _$id，如果找不到则返回 null
+     */
+    private async findPrefabNodeIdByComponentFileId(prefabUuid: string, componentFileId: string, componentType: string): Promise<{ nodeId: string, actualCompType: string } | null> {
+        try {
+            // 1. 首先读取 Cocos 原始预制体文件，找到 fileId 对应的节点名称
+            logger.debug("PrefabConversion", `findPrefabNodeIdByComponentFileId: cocosProjectRoot=${this.owner.cocosProjectRoot}`);
+            const prefabDir = fpath.join(this.owner.cocosProjectRoot, "library", prefabUuid.substring(0, 2));
+
+            logger.debug("PrefabConversion", `findPrefabNodeIdByComponentFileId: prefabUuid=${prefabUuid}, componentFileId=${componentFileId}`);
+
+            // 动态查找 Cocos library 中匹配的 prefab JSON 文件
+            // 不同 Cocos 项目的 FBX sub-asset ID 不同（如 @d9541, @74dd3 等）
+            let cocosPrefabPath: string | null = null;
+            if (fs.existsSync(prefabDir)) {
+                const files = fs.readdirSync(prefabDir);
+                // 优先查找带 @ 后缀的 JSON 文件（FBX 导入的预制体）
+                const prefabFiles = files.filter((f: string) => f.startsWith(prefabUuid) && f.endsWith('.json'));
+                logger.debug("PrefabConversion", `Found ${prefabFiles.length} candidate files: ${prefabFiles.join(', ')}`);
+
+                // 遍历候选文件，找到包含 cc.Prefab 类型的文件（即预制体数据文件）
+                for (const file of prefabFiles) {
+                    const candidatePath = fpath.join(prefabDir, file);
+                    try {
+                        const candidateData = await IEditorEnv.utils.readJsonAsync(candidatePath);
+                        if (Array.isArray(candidateData) && candidateData.length > 0 && candidateData[0].__type__ === "cc.Prefab") {
+                            cocosPrefabPath = candidatePath;
+                            logger.debug("PrefabConversion", `Found Cocos prefab file: ${file}`);
+                            break;
+                        }
+                    } catch (e) {
+                        // 跳过无法解析的文件
+                    }
+                }
+            }
+
+            let nodeName: string | null = null;
+
+            if (cocosPrefabPath) {
+                logger.debug("PrefabConversion", `Cocos prefab file exists: ${cocosPrefabPath}`);
+                const cocosPrefabData = await IEditorEnv.utils.readJsonAsync(cocosPrefabPath);
+                if (Array.isArray(cocosPrefabData)) {
+                    // 遍历 Cocos 预制体数据，找到 fileId 对应的组件所属的节点
+                    for (let i = 0; i < cocosPrefabData.length; i++) {
+                        const item = cocosPrefabData[i];
+                        // 检查是否是 cc.CompPrefabInfo，包含 fileId
+                        if (item.__type__ === "cc.CompPrefabInfo" && item.fileId === componentFileId) {
+                            // 找到了组件的 prefab info，现在需要找到对应的组件
+                            // 组件的 __prefab 指向这个 CompPrefabInfo
+                            for (let j = 0; j < cocosPrefabData.length; j++) {
+                                const comp = cocosPrefabData[j];
+                                if (comp.__prefab && comp.__prefab.__id__ === i) {
+                                    // 找到了组件，现在获取它所属的节点
+                                    if (comp.node && comp.node.__id__ !== undefined) {
+                                        const nodeData = cocosPrefabData[comp.node.__id__];
+                                        if (nodeData && nodeData._name) {
+                                            nodeName = nodeData._name;
+                                            logger.debug("PrefabConversion", `Found node name "${nodeName}" for component fileId: ${componentFileId}`);
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            } else {
+                logger.warn("PrefabConversion", `Cocos prefab file not found for UUID: ${prefabUuid} in ${prefabDir}`);
+            }
+
+            logger.debug("PrefabConversion", `Found nodeName: ${nodeName}`);
+
+            // 2. 读取 LayaAir 预制体文件
+            const prefabLibPath = fpath.join(EditorEnv.projectPath, "library", prefabUuid.substring(0, 2), `${prefabUuid}@0.lh`);
+            
+            if (!fs.existsSync(prefabLibPath)) {
+                logger.debug("PrefabConversion", `LayaAir prefab file not found (findPrefabNodeIdByComponentFileId): ${prefabLibPath}`);
+                return null;
+            }
+            
+            const prefabData = await IEditorEnv.utils.readJsonAsync(prefabLibPath);
+            if (!prefabData) {
+                logger.debug("PrefabConversion", `Failed to read LayaAir prefab file (findPrefabNodeIdByComponentFileId): ${prefabLibPath}`);
+                return null;
+            }
+            
+            // 将 Cocos 组件类型映射到 LayaAir 组件类型
+            const compTypeMap: Record<string, string> = {
+                "cc.MeshRenderer": "MeshRenderer",
+                "cc.SkinnedMeshRenderer": "SkinnedMeshRenderer",
+                "cc.Camera": "Camera",
+            };
+            const layaCompType = compTypeMap[componentType] || componentType;
+
+            // 构建兼容类型集合：MeshRenderer 同时匹配 SkinnedMeshRenderer（继承关系）
+            const compatibleTypes: Set<string> = new Set([layaCompType]);
+            if (layaCompType === "MeshRenderer") {
+                compatibleTypes.add("SkinnedMeshRenderer");
+            }
+
+            // 3. 在 LayaAir 预制体中查找节点
+            const findNode = (node: any): { nodeId: string, actualCompType: string } | null => {
+                if (!node) return null;
+
+                // 如果有节点名称，优先通过名称匹配
+                if (nodeName && node.name === nodeName) {
+                    // 确认该节点有对应的组件
+                    if (node._$comp && Array.isArray(node._$comp)) {
+                        for (const comp of node._$comp) {
+                            if (compatibleTypes.has(comp._$type)) {
+                                logger.debug("PrefabConversion", `Found LayaAir node by name: ${nodeName}, _$id: ${node._$id}, compType: ${comp._$type}`);
+                                return { nodeId: node._$id, actualCompType: comp._$type };
+                            }
+                        }
+                    }
+                }
+
+                // 递归检查子节点
+                if (node._$child && Array.isArray(node._$child)) {
+                    for (const child of node._$child) {
+                        const result = findNode(child);
+                        if (result) return result;
+                    }
+                }
+
+                return null;
+            };
+
+            let result = findNode(prefabData);
+
+            // 4. 如果通过名称没找到，回退到通过组件类型查找（第一个匹配的）
+            if (!result) {
+                logger.debug("PrefabConversion", `Node not found by name, falling back to component type search`);
+                const findByCompType = (node: any): { nodeId: string, actualCompType: string } | null => {
+                    if (!node) return null;
+
+                    if (node._$comp && Array.isArray(node._$comp)) {
+                        for (const comp of node._$comp) {
+                            if (compatibleTypes.has(comp._$type)) {
+                                return { nodeId: node._$id, actualCompType: comp._$type };
+                            }
+                        }
+                    }
+
+                    if (node._$child && Array.isArray(node._$child)) {
+                        for (const child of node._$child) {
+                            const r = findByCompType(child);
+                            if (r) return r;
+                        }
+                    }
+
+                    return null;
+                };
+                result = findByCompType(prefabData);
+            }
+
+            return result;
+        } catch (error) {
+            logger.error("PrefabConversion", `Error finding prefab node:`, error);
+            return null;
+        }
+    }
+
+    /**
+     * 从 LayaAir 预制体中根据节点的 fileId 查找节点 ID
+     * 通过读取 Cocos 原始预制体文件，根据 fileId 找到节点名称，
+     * 然后在 LayaAir 转换后的预制体中通过节点名称匹配找到对应的 _$id
+     * @param prefabUuid 预制体 UUID
+     * @param nodeFileId Cocos 节点的 fileId
+     * @returns LayaAir 预制体中节点的 _$id，如果找不到则返回 null
+     */
+    private async findPrefabNodeIdByNodeFileId(prefabUuid: string, nodeFileId: string): Promise<string | null> {
+        try {
+            // 1. 首先读取 Cocos 原始预制体文件，找到 fileId 对应的节点名称
+            const prefabDir = fpath.join(this.owner.cocosProjectRoot, "library", prefabUuid.substring(0, 2));
+
+            logger.debug("PrefabConversion", `findPrefabNodeIdByNodeFileId: prefabUuid=${prefabUuid}, nodeFileId=${nodeFileId}`);
+
+            // 动态查找 Cocos library 中匹配的 prefab JSON 文件
+            let cocosPrefabPath: string | null = null;
+            if (fs.existsSync(prefabDir)) {
+                const files = fs.readdirSync(prefabDir);
+                const prefabFiles = files.filter((f: string) => f.startsWith(prefabUuid) && f.endsWith('.json'));
+                for (const file of prefabFiles) {
+                    const candidatePath = fpath.join(prefabDir, file);
+                    try {
+                        const candidateData = await IEditorEnv.utils.readJsonAsync(candidatePath);
+                        if (Array.isArray(candidateData) && candidateData.length > 0 && candidateData[0].__type__ === "cc.Prefab") {
+                            cocosPrefabPath = candidatePath;
+                            break;
+                        }
+                    } catch (e) {
+                        // 跳过无法解析的文件
+                    }
+                }
+            }
+
+            let nodeName: string | null = null;
+
+            if (cocosPrefabPath) {
+                const cocosPrefabData = await IEditorEnv.utils.readJsonAsync(cocosPrefabPath);
+                if (Array.isArray(cocosPrefabData)) {
+                    // 遍历 Cocos 预制体数据，找到 fileId 对应的节点
+                    for (let i = 0; i < cocosPrefabData.length; i++) {
+                        const item = cocosPrefabData[i];
+                        // 检查是否是 cc.PrefabInfo，包含 fileId
+                        if (item.__type__ === "cc.PrefabInfo" && item.fileId === nodeFileId) {
+                            // 找到了节点的 prefab info，现在需要找到对应的节点
+                            // 节点的 _prefab 指向这个 PrefabInfo
+                            for (let j = 0; j < cocosPrefabData.length; j++) {
+                                const node = cocosPrefabData[j];
+                                if (node.__type__ === "cc.Node" && node._prefab && node._prefab.__id__ === i) {
+                                    nodeName = node._name;
+                                    logger.debug("PrefabConversion", `Found node name "${nodeName}" for node fileId: ${nodeFileId}`);
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            } else {
+                logger.warn("PrefabConversion", `Cocos prefab file not found for UUID: ${prefabUuid} in ${prefabDir}`);
+            }
+            
+            if (!nodeName) {
+                logger.debug("PrefabConversion", `Node name not found for fileId: ${nodeFileId}`);
+                return null;
+            }
+            
+            // 2. 读取 LayaAir 预制体文件
+            const prefabLibPath = fpath.join(EditorEnv.projectPath, "library", prefabUuid.substring(0, 2), `${prefabUuid}@0.lh`);
+            
+            if (!fs.existsSync(prefabLibPath)) {
+                logger.debug("PrefabConversion", `LayaAir prefab file not found (findPrefabNodeIdByNodeFileId): ${prefabLibPath}`);
+                return null;
+            }
+            
+            const prefabData = await IEditorEnv.utils.readJsonAsync(prefabLibPath);
+            if (!prefabData) {
+                logger.debug("PrefabConversion", `Failed to read LayaAir prefab file (findPrefabNodeIdByNodeFileId): ${prefabLibPath}`);
+                return null;
+            }
+            
+            // 3. 在 LayaAir 预制体中通过名称查找节点
+            const findNodeByName = (node: any): string | null => {
+                if (!node) return null;
+                
+                if (node.name === nodeName) {
+                    logger.debug("PrefabConversion", `Found LayaAir node by name: ${nodeName}, _$id: ${node._$id}`);
+                    return node._$id;
+                }
+                
+                if (node._$child && Array.isArray(node._$child)) {
+                    for (const child of node._$child) {
+                        const result = findNodeByName(child);
+                        if (result) return result;
+                    }
+                }
+                
+                return null;
+            };
+            
+            return findNodeByName(prefabData);
+        } catch (error) {
+            logger.error("PrefabConversion", `Error finding prefab node by fileId:`, error);
+            return null;
+        }
+    }
+
+    /**
      * 写入待处理的天空盒材质文件
      */
     private async writePendingSkyboxMaterials() {
@@ -1241,6 +1767,98 @@ export class PrefabConversion implements ICocosAssetConversion {
 
         // 清空待处理列表
         this.owner._pendingSkyboxMaterials = [];
+    }
+
+    /**
+     * 写入待处理的粒子材质文件（.lmat），同时更新粒子纹理 .meta 的 sRGB=false
+     */
+    private async writePendingParticleMaterials() {
+        if (!this.owner._pendingParticleMaterials || this.owner._pendingParticleMaterials.length === 0) {
+            return;
+        }
+
+        // 收集需要更新 sRGB=false 的纹理 UUID
+        const textureUuidsToFix = new Set<string>();
+
+        for (let materialInfo of this.owner._pendingParticleMaterials) {
+            try {
+                await IEditorEnv.utils.writeJsonAsync(materialInfo.path, materialInfo.data);
+                await IEditorEnv.utils.writeJsonAsync(materialInfo.path + ".meta", { uuid: materialInfo.uuid });
+                if (materialInfo.textureUuid) {
+                    textureUuidsToFix.add(materialInfo.textureUuid);
+                }
+            } catch (error) {
+                console.error(`Failed to write particle material file ${materialInfo.path}:`, error);
+            }
+        }
+
+        // 更新粒子纹理 .meta 的 sRGB=false（粒子纹理不需要硬件 sRGB 解码，保持 gamma 空间）
+        if (textureUuidsToFix.size > 0) {
+            await this.updateParticleTextureSRGB(textureUuidsToFix);
+        }
+
+        // 清空待处理列表
+        this.owner._pendingParticleMaterials = [];
+    }
+
+    /**
+     * 递归搜索并更新粒子纹理 .meta 的 sRGB 为 false
+     */
+    private async updateParticleTextureSRGB(textureUuids: Set<string>) {
+        const projectRoot = IEditorEnv.projectPath;
+        if (!projectRoot) return;
+
+        const assetsDir = projectRoot + "/assets";
+        const findMetaFiles = (dir: string): string[] => {
+            const results: string[] = [];
+            try {
+                const entries = fs.readdirSync(dir, { withFileTypes: true });
+                for (const entry of entries) {
+                    const fullPath = dir + "/" + entry.name;
+                    if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git") {
+                        results.push(...findMetaFiles(fullPath));
+                    } else if (entry.name.endsWith(".png.meta") || entry.name.endsWith(".jpg.meta") || entry.name.endsWith(".jpeg.meta")) {
+                        results.push(fullPath);
+                    }
+                }
+            } catch (e) { /* 忽略不可访问的目录 */ }
+            return results;
+        };
+
+        const metaFiles = findMetaFiles(assetsDir);
+        for (const metaPath of metaFiles) {
+            try {
+                const content = fs.readFileSync(metaPath, "utf-8");
+                const meta = JSON.parse(content);
+                if (meta.uuid && textureUuids.has(meta.uuid) && meta.importer?.sRGB === true) {
+                    meta.importer.sRGB = false;
+                    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), "utf-8");
+                    console.log(`[ParticleTexture] Set sRGB=false for ${metaPath}`);
+                }
+            } catch (e) { /* 忽略解析错误 */ }
+        }
+    }
+
+    /**
+     * 写入待处理的 2D 动画控制器文件（.mcc）
+     */
+    private async writePendingAnimation2DControllers() {
+        if (!this.owner._pendingAnimation2DControllers || this.owner._pendingAnimation2DControllers.length === 0) {
+            return;
+        }
+
+        for (let controllerInfo of this.owner._pendingAnimation2DControllers) {
+            try {
+                await IEditorEnv.utils.writeJsonAsync(controllerInfo.path, controllerInfo.data);
+                await IEditorEnv.utils.writeJsonAsync(controllerInfo.path + ".meta", { uuid: controllerInfo.uuid });
+                console.debug(`Animation2D controller written: ${controllerInfo.path}`);
+            } catch (error) {
+                console.error(`Failed to write Animation2D controller file ${controllerInfo.path}:`, error);
+            }
+        }
+
+        // 清空待处理列表
+        this.owner._pendingAnimation2DControllers = [];
     }
 }
 

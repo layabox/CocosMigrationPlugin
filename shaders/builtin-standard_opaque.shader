@@ -108,7 +108,8 @@ GLSL Start
     void initSurfaceInputs(inout SurfaceInputs inputs, inout PixelParams pixel)
     {
         #ifdef UV
-            vec2 uv = transformUV(pixel.uv0, tilingOffset);
+            // Use Cocos-style UV transform (no V-flip like LayaAir's transformUV)
+            vec2 uv = pixel.uv0 * tilingOffset.xy + tilingOffset.zw;
         #else // UV
             vec2 uv = vec2(0.0);
         #endif // UV
@@ -127,12 +128,13 @@ GLSL Start
 
         #ifdef ALBEDOTEXTURE
             vec4 albedoSampler = texture2D(mainTexture, uv);
-            #ifdef Gamma_u_AlbedoTexture
-                albedoSampler = gammaToLinear(albedoSampler);
-            #endif // Gamma_u_AlbedoTexture
+            // Always convert sRGB to linear for Cocos-migrated textures
+            albedoSampler = gammaToLinear(albedoSampler);
                 inputs.diffuseColor *= albedoSampler.rgb;
                 inputs.alpha *= albedoSampler.a;
         #endif // ALBEDOTEXTURE
+
+        inputs.diffuseColor *= albedoScale;
 
         // Detail Albedo  细节反照率纹理，cocos中暂时没找到对应实现
         #ifdef DETAILTEXTURE
@@ -153,29 +155,30 @@ GLSL Start
         #endif
 
             inputs.metallic = metallic;
-            inputs.smoothness = roughness;
+            inputs.smoothness = 1.0 - roughness;
+            inputs.occlusion = 1.0;
 
         #ifdef METALLICGLOSSTEXTURE
-            vec4 metallicSampler = texture2D(pbrMap, uv);
-            inputs.metallic = metallicSampler.x;
-            inputs.smoothness = (metallicSampler.a * roughness);
+            vec4 pbrSampler = texture2D(pbrMap, uv);
+            // Cocos channel mapping: .r=occlusion, .g=roughness, .b=metallic, .a=specularIntensity
+            inputs.occlusion = mix(1.0, pbrSampler.r, occlusion);
+            inputs.smoothness = 1.0 - (pbrSampler.g * roughness);
+            inputs.metallic = pbrSampler.b * metallic;
+        #else
+            #ifdef OCCLUSIONTEXTURE
+                vec4 occlusionSampler = texture2D(occlusionMap, uv);
+                float occTex = occlusionSampler.g;
+                inputs.occlusion = (1.0 - occlusion) + occTex * occlusion;
+            #endif // OCCLUSIONTEXTURE
         #endif // METALLICGLOSSTEXTURE
-
-            inputs.occlusion = 1.0;
-        #ifdef OCCLUSIONTEXTURE
-            vec4 occlusionSampler = texture2D(occlusionMap, uv);
-            float occlusion1 = occlusionSampler.g; //原本是float occlusion，但和uniform中的occlusion重名了，所以改成occlusion1
-            inputs.occlusion = (1.0 - occlusion) + occlusion1 * occlusion;
-        #endif // OCCLUSIONTEXTURE
 
             inputs.emissionColor = vec3(0.0);
         #ifdef EMISSION
             inputs.emissionColor = emissive.rgb * emissiveScale;
             #ifdef EMISSIONTEXTURE
                 vec4 emissionSampler = texture2D(emissiveMap, uv);
-            #ifdef Gamma_u_EmissionTexture
+            // Always convert sRGB to linear for Cocos-migrated textures
                 emissionSampler = gammaToLinear(emissionSampler);
-            #endif // Gamma_u_EmissionTexture
                 inputs.emissionColor *= emissionSampler.rgb;
             #endif // EMISSIONTEXTURE
         #endif // EMISSION

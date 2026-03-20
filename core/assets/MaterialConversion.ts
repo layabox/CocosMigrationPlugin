@@ -106,6 +106,10 @@ export class MaterialConversion implements ICocosAssetConversion {
             this.convertRenderStatesFromEffect(layaMaterial, effectUuid, techniqueName);
         }
 
+        // 根据 technique 名称自动设置混合状态（如果还没有设置）
+        // 这是一个后备机制，用于处理 Cocos 内置 effect 的情况
+        this.applyTechniqueBasedBlendState(layaMaterial, techniqueName);
+
         // 获取 shader 文件路径，读取实际的 uniform 名称
         const shaderUniformInfo = this.getShaderUniforms(shaderInfo.type);
 
@@ -114,11 +118,110 @@ export class MaterialConversion implements ICocosAssetConversion {
 
         // 为 Toon shader 添加必要的默认参数（如果材质中没有设置）
         // 这些参数对于 Toon 着色效果至关重要
-        if (shaderInfo.type === "toon_default" || shaderInfo.source === "toon") {
+        if (shaderInfo.type === "toon_default" || shaderInfo.type === "builtin-toon_default" || shaderInfo.source === "toon" || shaderInfo.source === "builtin-toon") {
+            // 先对从 Cocos 转换过来的实际颜色值做 sqrt 编码（shader 中 toCocosLinear(x²) 恢复）
+            // 必须在 ensureToonDefaults 之前，因为默认值已经是预编码的
+            this.encodeToonColors(layaMaterial.props);
             this.ensureToonDefaults(layaMaterial.props);
         }
 
+        // PBR 材质：补偿 Cocos/LayaAir 渲染管线亮度差异
+        // 同样的白色 albedo + 贴图，LayaAir PBR 渲染偏亮（tone mapping、伽马处理差异）
+        // 补偿系数 0.78 根据两端视觉对比确定（Cocos albedo 白色 ≈ LayaAir C7CACE）
+        if (layaMaterial.props.type === "PBR") {
+            const PBR_ALBEDO_SCALE = 0.78;
+            const color = layaMaterial.props.u_AlbedoColor ?? [1, 1, 1, 1];
+            layaMaterial.props.u_AlbedoColor = [
+                color[0] * PBR_ALBEDO_SCALE,
+                color[1] * PBR_ALBEDO_SCALE,
+                color[2] * PBR_ALBEDO_SCALE,
+                color[3]
+            ];
+        }
+
+        // PBR 透明材质后处理
+        if (layaMaterial.props.type === "PBR" && layaMaterial.props.materialRenderMode === 2) {
+            const alphaTestValue = layaMaterial.props.u_AlphaTestValue ?? 0;
+            if (alphaTestValue <= 0) {
+                layaMaterial.props.alphaTest = false;
+                const defs = layaMaterial.props.defines;
+                const idx = defs.indexOf("ALPHATEST");
+                if (idx !== -1) {
+                    defs.splice(idx, 1);
+                }
+                delete layaMaterial.props.u_AlphaTestValue;
+            }
+            // 显式设置 u_AlbedoColor，避免 IDE 刷新时使用错误的默认值
+            if (!layaMaterial.props.u_AlbedoColor) {
+                layaMaterial.props.u_AlbedoColor = [1, 1, 1, 1];
+            }
+        }
+
+        // 最终清理：移除不应出现在 .lmat 中的属性
+        // 1. _cocosEffect 是插件内部标记，MaterialParser 会将其作为 Matrix4x4 解析导致 NaN
+        delete layaMaterial.props._cocosEffect;
+        // 2. 非 PBR uniform 的属性（来自 Cocos 但在 LayaAir PBR 中无对应）
+        if (layaMaterial.props.type === "PBR") {
+            delete layaMaterial.props.shininess;
+            delete layaMaterial.props.specularIntensity;
+        }
+        // 3. materialRenderMode 已设置时，移除冗余的显式 blend/depth 属性
+        //    materialRenderMode setter 在引擎加载时会统一设置这些状态，
+        //    显式属性在 move() 刷新时会产生顺序冲突导致渲染异常
+        const mode = layaMaterial.props.materialRenderMode;
+        if (mode !== undefined && mode !== 0 && mode !== 5) {
+            // materialRenderMode setter 会设置：blend, blendSrc, blendDst, depthWrite, depthTest, alphaTest, renderQueue
+            // 显式属性在 move() 刷新时会因执行顺序不同而产生冲突
+            delete layaMaterial.props.s_Blend;
+            delete layaMaterial.props.s_BlendSrc;
+            delete layaMaterial.props.s_BlendDst;
+            delete layaMaterial.props.s_BlendSrcAlpha;
+            delete layaMaterial.props.s_BlendDstAlpha;
+            delete layaMaterial.props.s_BlendSrcRGB;
+            delete layaMaterial.props.s_BlendDstRGB;
+            delete layaMaterial.props.s_BlendEquation;
+            delete layaMaterial.props.s_BlendEquationRGB;
+            delete layaMaterial.props.s_BlendEquationAlpha;
+            delete layaMaterial.props.s_DepthWrite;
+            // s_Cull 和 s_DepthTest 保留，materialRenderMode 不设置它们
+        }
+
         return layaMaterial;
+    }
+
+    /**
+     * 根据 technique 名称自动设置混合状态
+     * 用于处理 Cocos 内置 effect 的情况，这些 effect 的混合状态定义在 effect 文件中而不是材质中
+     */
+    private applyTechniqueBasedBlendState(layaMaterial: any, techniqueName: string | null): void {
+        if (!techniqueName) return;
+
+        const props = layaMaterial.props;
+        const techniqueNameLower = techniqueName.toLowerCase();
+
+        // 如果已经设置了 materialRenderMode（非不透明），不覆盖
+        if (props.materialRenderMode !== undefined && props.materialRenderMode !== 0) {
+            return;
+        }
+
+        // 根据 technique 名称设置 materialRenderMode
+        // 不再设置显式 blend 属性（s_Blend, s_BlendSrc, s_BlendDst 等），
+        // 由 materialRenderMode setter 在引擎加载时统一处理，
+        // 避免 IDE 刷新时 move() 中 materialRenderMode setter 与显式值的顺序冲突
+        if (techniqueNameLower === "transparent" || techniqueNameLower.includes("transparent")) {
+            props.renderQueue = 3000;
+            props.materialRenderMode = 2; // TRANSPARENT
+            console.debug(`[MaterialConversion] Applied transparent mode based on technique name: ${techniqueName}`);
+        } else if (techniqueNameLower === "add" || techniqueNameLower === "additive" || techniqueNameLower.includes("add")) {
+            props.renderQueue = 3000;
+            props.materialRenderMode = 3; // ADDITIVE
+            console.debug(`[MaterialConversion] Applied additive mode based on technique name: ${techniqueName}`);
+        } else if (techniqueNameLower === "alpha-blend" || techniqueNameLower.includes("alpha")) {
+            props.renderQueue = 3000;
+            props.materialRenderMode = 4; // ALPHABLENDED
+            console.debug(`[MaterialConversion] Applied alpha-blend mode based on technique name: ${techniqueName}`);
+        }
+        // opaque 不需要特殊处理，保持默认值
     }
 
     /**
@@ -136,12 +239,12 @@ export class MaterialConversion implements ICocosAssetConversion {
         // Color scale
         if (props.colorScale === undefined) props.colorScale = [1.0, 1.0, 1.0];
 
-        // Base color
-        if (props.baseColor === undefined) props.baseColor = [0.6, 0.6, 0.6, 1.0];
+        // Base color — Cocos 默认 x² 线性值 0.6，存储 sqrt(0.6) 供 toCocosLinear 恢复
+        if (props.baseColor === undefined) props.baseColor = [0.775, 0.775, 0.775, 1.0];
 
-        // Shade colors
-        if (props.shadeColor1 === undefined) props.shadeColor1 = [0.4, 0.4, 0.4, 1.0];
-        if (props.shadeColor2 === undefined) props.shadeColor2 = [0.2, 0.2, 0.2, 1.0];
+        // Shade colors — Cocos 默认 x² 线性值 0.4/0.2，存储 sqrt
+        if (props.shadeColor1 === undefined) props.shadeColor1 = [0.632, 0.632, 0.632, 1.0];
+        if (props.shadeColor2 === undefined) props.shadeColor2 = [0.447, 0.447, 0.447, 1.0];
 
         // Specular (w 分量控制高光大小，0.3 是合理的默认值)
         if (props.specular === undefined) props.specular = [1.0, 1.0, 1.0, 0.3];
@@ -163,6 +266,30 @@ export class MaterialConversion implements ICocosAssetConversion {
 
         // Alpha threshold
         if (props.alphaThreshold === undefined) props.alphaThreshold = 0.5;
+    }
+
+    /**
+     * 对 Toon shader 中需要 toCocosLinear(x²) 恢复的颜色值进行 sqrt 编码。
+     * ensureToonDefaults 的默认值已预编码（如 sqrt(0.4)=0.632），
+     * 但从 Cocos 转换过来的实际值是原始线性值，需要同样的 sqrt 编码。
+     */
+    private encodeToonColors(props: any): void {
+        const sqrtEncode = (color: number[]): number[] => {
+            const round3 = (v: number) => Math.round(v * 1000) / 1000;
+            return [
+                round3(Math.sqrt(Math.max(0, color[0]))),
+                round3(Math.sqrt(Math.max(0, color[1]))),
+                round3(Math.sqrt(Math.max(0, color[2]))),
+                color[3] !== undefined ? color[3] : 1.0
+            ];
+        };
+
+        const colorKeys = ["baseColor", "shadeColor1", "shadeColor2", "specular", "emissive"];
+        for (const key of colorKeys) {
+            if (Array.isArray(props[key]) && props[key].length >= 3) {
+                props[key] = sqrtEncode(props[key]);
+            }
+        }
     }
 
     private getShaderUniforms(shaderType: string): { all: Set<string>, textures: Set<string>, colors: Set<string>, vectors: Set<string> } {
@@ -294,6 +421,18 @@ export class MaterialConversion implements ICocosAssetConversion {
             }
         }
 
+        // 在插件的 shaders 目录中查找预置的 shader 文件
+        try {
+            const pluginShadersPath = path.resolve(__dirname, "..", "..", "shaders");
+            const pluginShaderPath = path.join(pluginShadersPath, `${shaderType}.shader`);
+            if (fs.existsSync(pluginShaderPath)) {
+                console.debug(`[MaterialConversion] Found shader file in plugin shaders directory: ${pluginShaderPath}`);
+                return { sourcePath: pluginShaderPath };
+            }
+        } catch (e) {
+            // ignore
+        }
+
         console.debug(`[MaterialConversion] Shader file not found for type: ${shaderType}`);
         return null;
     }
@@ -371,10 +510,10 @@ export class MaterialConversion implements ICocosAssetConversion {
         // 根据 Cocos effect 名称映射到 LayaAir shader
         // 常见的内置材质映射（注意大小写要一致）
         const builtinShaderMap: Record<string, string> = {
-            // "builtin-standard": "BLINNPHONG",
-            // "builtin-unlit": "Unlit",
+            "builtin-standard": "PBR",
+            "builtin-unlit": "Unlit",
             // "builtin-toon": "Toon",
-            // "builtin-particle": "PARTICLESHURIKEN",
+            "builtin-particle": "PARTICLESHURIKEN",
             // "builtin-spine": "Spine",
             // "builtin-sprite": "Sprite2D",
             // "builtin-terrain": "Terrain",
@@ -384,6 +523,16 @@ export class MaterialConversion implements ICocosAssetConversion {
             // "builtin-sky-panoramic": "SkyPanoramic",
             // "builtin-sky-procedural": "SkyProcedural",
             // "builtin-gltf-pbr": "glTFPBR"
+        };
+        
+        // 自定义 Shader 映射：Cocos effect 名称 -> LayaAir shader 名称
+        // 这些 shader 已经在 LayaAir 中实现，不受 FORCE_UNLIT_FOR_CUSTOM_SHADERS 开关影响
+        const customShaderMap: Record<string, string> = {
+            // StandardWithOutline: PBR + 描边效果
+            "standardwithoutline": "StandardWithOutline",
+            // builtin-toon / toon: 使用预置的 toon_default shader（在 shaders/ 目录中）
+            "builtin-toon": "toon_default",
+            "toon": "toon_default",
         };
         const effectCandidates: Array<{ raw: string, normalized: string }> = [];
 
@@ -421,17 +570,30 @@ export class MaterialConversion implements ICocosAssetConversion {
                 collectCandidate(effectName);
         }
 
+        console.log(`[MaterialConversion] resolveShaderInfo: effectCandidates =`, effectCandidates.map(c => `${c.raw} -> ${c.normalized}`));
+
         for (const candidate of effectCandidates) {
             const builtin = builtinShaderMap[candidate.normalized];
+            console.log(`[MaterialConversion] resolveShaderInfo: checking candidate "${candidate.normalized}" -> builtin = "${builtin}"`);
             if (builtin) {
                 // 如果是内置 shader，直接返回，不受开关影响
+                console.log(`[MaterialConversion] resolveShaderInfo: matched builtin shader "${candidate.normalized}" -> "${builtin}"`);
                 return { type: builtin, source: candidate.raw };
+            }
+            
+            // 检查自定义 Shader 映射（这些 shader 已经在 LayaAir 中实现）
+            // 注意：customShaderMap 中的映射不受 FORCE_UNLIT_FOR_CUSTOM_SHADERS 开关影响
+            const customShader = customShaderMap[candidate.normalized];
+            if (customShader) {
+                console.debug(`[MaterialConversion] Using custom shader: ${candidate.raw} -> ${customShader}`);
+                return { type: customShader, source: candidate.raw };
             }
         }
 
-        // 如果开关打开，所有自定义 shader 都强制转换为 Unlit
+        // 如果开关打开，未映射的自定义 shader 强制转换为 Unlit
         if (FORCE_UNLIT_FOR_CUSTOM_SHADERS) {
-            console.debug(`[MaterialConversion] Force converting custom shader to Unlit (FORCE_UNLIT_FOR_CUSTOM_SHADERS = true)`);
+            const effectName = effectCandidates.length > 0 ? effectCandidates[0].raw : "unknown";
+            console.debug(`[MaterialConversion] Force converting custom shader "${effectName}" to Unlit (FORCE_UNLIT_FOR_CUSTOM_SHADERS = true)`);
             return { type: "Unlit" };
         }
 
@@ -1082,7 +1244,7 @@ export class MaterialConversion implements ICocosAssetConversion {
 
         // 判断是否是 Laya 内置 shader（注意大小写要一致）
         const isBuiltinShader = (type: string): boolean => {
-            const builtinShaders = ["BLINNPHONG", "Unlit", "PBR", "PARTICLESHURIKEN", "Trail", "SkyBox", "SkyPanoramic", "SkyProcedural", "glTFPBR"];
+            const builtinShaders = ["BLINNPHONG", "Unlit", "PBR", "PARTICLESHURIKEN", "Trail", "SkyBox", "SkyPanoramic", "SkyProcedural", "glTFPBR", "StandardWithOutline", "toon_default"];
             return builtinShaders.includes(type);
         };
 
@@ -1109,7 +1271,21 @@ export class MaterialConversion implements ICocosAssetConversion {
                 "albedoTexture": "u_AlbedoTexture",
                 "albedoColor": "u_AlbedoColor",
                 "baseColorTexture": "u_AlbedoTexture",
-                "baseColor": "u_AlbedoColor"
+                "baseColor": "u_AlbedoColor",
+                "diffuseTexture": "u_AlbedoTexture",
+                "diffuseColor": "u_AlbedoColor",
+                "normalMap": "u_NormalTexture",
+                "normalTexture": "u_NormalTexture",
+                "emissiveMap": "u_EmissionTexture",
+                "emissionTexture": "u_EmissionTexture",
+                "emissive": "u_EmissionColor",
+                "emissionColor": "u_EmissionColor",
+                "roughness": "u_Smoothness",
+                "metallic": "u_Metallic",
+                "occlusionMap": "u_OcclusionTexture",
+                "occlusionTexture": "u_OcclusionTexture",
+                "tilingOffset": "u_TilingOffset",
+                "alphaThreshold": "u_AlphaTestValue"
             },
             "glTFPBR": {
                 "mainTexture": "u_AlbedoTexture",
@@ -1118,12 +1294,59 @@ export class MaterialConversion implements ICocosAssetConversion {
                 "albedoColor": "u_AlbedoColor",
                 "baseColorTexture": "u_AlbedoTexture",
                 "baseColor": "u_AlbedoColor"
+            },
+            "PARTICLESHURIKEN": {
+                "mainTexture": "u_texture",
+                "mainColor": "u_Tintcolor",
+                "tintColor": "u_Tintcolor",
+                "tilingOffset": "u_TilingOffset",
+                "alphaThreshold": "u_AlphaTestValue"
+            },
+            // StandardWithOutline: 自定义 PBR + Outline shader
+            // uniform 名称与 shader 文件中的定义一致
+            "StandardWithOutline": {
+                // Cocos -> StandardWithOutline uniform mapping
+                "mainTexture": "mainTexture",  // 贴图名称直接使用
+                "albedoMap": "mainTexture",
+                "mainColor": "mainColor",
+                "albedo": "mainColor",
+                "tilingOffset": "tilingOffset",
+                "normalMap": "normalMap",
+                "emissiveMap": "emissiveMap",
+                "emissive": "emissive",
+                "roughness": "roughness",  // 保持 roughness，不转换为 smoothness
+                "metallic": "metallic",
+                "occlusionMap": "occlusionMap",
+                "alphaThreshold": "alphaThreshold",
+                // Outline 参数
+                "lineWidth": "lineWidth",
+                "depthBias": "depthBias",
+                "outlineColor": "outlineColor"
+            },
+            // toon_default: 预置的 Toon shader
+            // Cocos toon 的 mainColor 对应 shader 中的 baseColor
+            "toon_default": {
+                "mainColor": "baseColor",
+                "mainTexture": "mainTexture",
+                "tilingOffset": "tilingOffset",
+                "alphaThreshold": "alphaThreshold",
+                "shadeColor1": "shadeColor1",
+                "shadeColor2": "shadeColor2"
             }
         };
 
         // 从 shader 中查找 uniform 名称（根据 Cocos 属性名动态查找）
-        // 保持变量名原样，不进行任何转换
+        // 对于内置 Shader，使用预定义的映射表
         const findUniformByName = (cocosPropName: string, uniformType: "texture" | "color" | "vector" | "any"): string | null => {
+            // 首先检查是否是内置 Shader，如果是，使用预定义的映射表
+            if (isBuiltinShader(shaderType)) {
+                const uniformMap = builtinShaderUniformMap[shaderType];
+                if (uniformMap && uniformMap[cocosPropName]) {
+                    console.debug(`[MaterialConversion] Using builtin shader mapping: ${cocosPropName} -> ${uniformMap[cocosPropName]}`);
+                    return uniformMap[cocosPropName];
+                }
+            }
+
             // 直接使用 Cocos 的属性名，不进行任何转换
             const originalName = cocosPropName;
 
@@ -1182,13 +1405,46 @@ export class MaterialConversion implements ICocosAssetConversion {
             // 如果没有传入 define，根据 uniform 名称自动生成（与 shader 生成逻辑一致）
             let defineName = define;
             if (!defineName) {
-                defineName = name.toUpperCase().replace("U_", "");
-                if (defineName === "DIFFUSETEXTURE") {
-                    defineName = "DIFFUSEMAP";
-                } else if (defineName === "ALBEDOTEXTURE") {
+                // 对于内置 Shader，使用正确的 define 名称
+                const upperName = name.toUpperCase().replace("U_", "");
+                
+                // 检查是否是使用 MAINTEXTURE define 的 shader（如 builtin-camera-texture 系列）
+                const useMainTextureDefine = shaderType.startsWith("builtin-camera-texture") ||
+                                              shaderType === "toon_default" ||
+                                              shaderType === "builtin-toon_default" ||
+                                              shaderType.startsWith("toon") ||
+                                              shaderType.startsWith("builtin-toon");
+                
+                if (upperName === "ALBEDOTEXTURE") {
                     defineName = "ALBEDOTEXTURE";
-                } else if (!defineName.endsWith("TEXTURE")) {
-                    defineName = defineName + "TEXTURE";
+                } else if (upperName === "MAINTEXTURE") {
+                    // 根据 shader 类型决定使用哪个 define
+                    if (useMainTextureDefine) {
+                        defineName = "MAINTEXTURE";
+                    } else {
+                        // 对于 PBR、StandardWithOutline 等 shader，使用 ALBEDOTEXTURE
+                        defineName = "ALBEDOTEXTURE";
+                    }
+                } else if (upperName === "DIFFUSETEXTURE") {
+                    defineName = "DIFFUSEMAP";
+                } else if (upperName.endsWith("TEXTURE")) {
+                    defineName = upperName;
+                } else if (upperName.endsWith("MAP")) {
+                    // normalMap -> NORMALTEXTURE, emissiveMap -> EMISSIONTEXTURE
+                    const baseName = upperName.replace("MAP", "");
+                    if (baseName === "NORMAL") {
+                        defineName = "NORMALTEXTURE";
+                    } else if (baseName === "EMISSIVE") {
+                        defineName = "EMISSIONTEXTURE";
+                    } else if (baseName === "OCCLUSION") {
+                        defineName = "OCCLUSIONTEXTURE";
+                    } else if (baseName === "PBR") {
+                        defineName = "METALLICGLOSSTEXTURE";
+                    } else {
+                        defineName = baseName + "TEXTURE";
+                    }
+                } else {
+                    defineName = upperName + "TEXTURE";
                 }
             }
 
@@ -1317,14 +1573,28 @@ export class MaterialConversion implements ICocosAssetConversion {
                 continue;
             }
 
-            // 特殊处理：roughness 和 shininess 是反向关系
+            // 特殊处理：roughness 需要转换
+            // - 对于 PBR shader：roughness -> smoothness = 1 - roughness
+            // - 对于其他 shader：roughness 直接使用，同时设置 shininess = 1 - roughness
             if (key === "roughness") {
-                const propertyType = inferPropertyType(key, value);
-                handleProperty(key, value, propertyType);
-                // 同时设置 shininess（反向关系）
+                const numValue = typeof value === "number" ? value : 0;
+                const uniformName = findUniformByName(key, "any");
+                
+                // 检查是否映射到 u_Smoothness（PBR shader）
+                if (uniformName === "u_Smoothness") {
+                    // PBR shader: smoothness = 1 - roughness
+                    const smoothnessValue = Math.max(0, Math.min(1, 1.0 - numValue));
+                    setScalar(uniformName, smoothnessValue);
+                    console.debug(`[MaterialConversion] Converting roughness ${numValue} to smoothness ${smoothnessValue}`);
+                } else {
+                    // 其他 shader：直接使用 roughness 值
+                    const propertyType = inferPropertyType(key, value);
+                    handleProperty(key, value, propertyType);
+                }
+                
+                // 同时设置 shininess（反向关系），用于 BlinnPhong 等 shader
                 const shininessUniform = findUniformByName("shininess", "any");
                 if (shininessUniform && (!shaderUniformInfo || shaderUniformInfo.all.size === 0 || shaderUniformInfo.all.has(shininessUniform))) {
-                    const numValue = typeof value === "number" ? value : 0;
                     setScalar(shininessUniform, Math.max(0, Math.min(1, 1.0 - numValue)));
                 }
                 continue;
@@ -1333,6 +1603,15 @@ export class MaterialConversion implements ICocosAssetConversion {
             // 通用处理：自动判断类型并处理
             const propertyType = inferPropertyType(key, value);
             handleProperty(key, value, propertyType);
+        }
+
+        // 对于 PBR shader：如果设置了 u_EmissionColor 且颜色不是纯黑，自动添加 EMISSION define
+        if (["PBR", "glTFPBR"].includes(shaderType)) {
+            const emColor = layaProps["u_EmissionColor"];
+            if (emColor && Array.isArray(emColor) && (emColor[0] > 0 || emColor[1] > 0 || emColor[2] > 0)) {
+                this.pushDefine(layaProps.defines, "EMISSION");
+                console.debug(`[MaterialConversion] 自动启用 EMISSION define（emissive 颜色非黑）`);
+            }
         }
 
         // Cocos 宏到 Laya 宏的映射表
@@ -1360,7 +1639,10 @@ export class MaterialConversion implements ICocosAssetConversion {
             // 特殊处理：USE_ALPHA_TEST 需要设置 alphaTest 属性
             if (defineKey === "USE_ALPHA_TEST" && defineValue === true) {
                 layaProps.alphaTest = true;
-                const defineName = this.toDefineName(defineKey);
+                // 对于 LayaAir 内置 shader (PBR, BLINNPHONG)，使用 ALPHATEST
+                // 对于自定义 shader (toon_default 等)，保持 USE_ALPHA_TEST
+                const isBuiltin = ["PBR", "BLINNPHONG", "Unlit", "glTFPBR"].includes(shaderType);
+                const defineName = isBuiltin ? "ALPHATEST" : this.toDefineName(defineKey);
                 this.pushDefine(layaProps.defines, defineName);
                 continue;
             }
@@ -1424,30 +1706,90 @@ export class MaterialConversion implements ICocosAssetConversion {
         }
 
         const uuid = this.mapUuid(cocosTextureUuid, textureAsset);
-        const userData: any = textureAsset.userData || {};
+        let userData: any = textureAsset.userData || {};
 
-        const width = userData.width ?? userData.imageWidth ?? userData.textureWidth ?? userData.pixelWidth ?? userData.rawWidth ?? userData.originalWidth ?? userData.originalSize?.width ?? userData.rect?.width ?? 1024;
-        const height = userData.height ?? userData.imageHeight ?? userData.textureHeight ?? userData.pixelHeight ?? userData.rawHeight ?? userData.originalHeight ?? userData.originalSize?.height ?? userData.rect?.height ?? 1024;
+        // Cocos stores texture properties (wrapMode, filterMode, etc.) in the subMeta (e.g. uuid@6c48a),
+        // not in the top-level image asset. If the current userData doesn't have wrapModeS,
+        // try to find the subMeta asset which contains the actual texture properties.
+        if (!userData.wrapModeS && !userData.wrapModeU) {
+            // If cocosTextureUuid doesn't contain '@', it's a top-level image UUID.
+            // Try to find the subMeta by appending common subMeta suffixes.
+            if (!cocosTextureUuid.includes("@")) {
+                // Common Cocos texture subMeta suffixes
+                const subMetaSuffixes = ["@6c48a", "@texture"];
+                for (const suffix of subMetaSuffixes) {
+                    const subUuid = cocosTextureUuid + suffix;
+                    const subAsset = this.owner.allAssets.get(subUuid);
+                    if (subAsset?.userData?.wrapModeS || subAsset?.userData?.wrapModeU) {
+                        console.debug(`[MaterialConversion] Found texture properties in subMeta: ${subUuid}`);
+                        userData = { ...userData, ...subAsset.userData };
+                        break;
+                    }
+                }
+            }
+        }
+
+        let width = userData.width ?? userData.imageWidth ?? userData.textureWidth ?? userData.pixelWidth ?? userData.rawWidth ?? userData.originalWidth ?? userData.originalSize?.width ?? userData.rect?.width;
+        let height = userData.height ?? userData.imageHeight ?? userData.textureHeight ?? userData.pixelHeight ?? userData.rawHeight ?? userData.originalHeight ?? userData.originalSize?.height ?? userData.rect?.height;
+
+        // 如果 Cocos 元数据中没有尺寸信息，从实际 PNG 文件头读取
+        if (width === undefined || height === undefined) {
+            const dims = this.readImageDimensions(textureAsset?.sourcePath);
+            if (dims) {
+                width = width ?? dims.width;
+                height = height ?? dims.height;
+                console.debug(`[MaterialConversion] 从图片文件读取尺寸: ${dims.width}x${dims.height}`);
+            }
+        }
+        width = width ?? 1024;
+        height = height ?? 1024;
         const mipmap = userData.generateMipmap ?? userData.generateMipmaps ?? userData.mipmaps ?? (userData.mipfilter ? userData.mipfilter !== "none" : false);
 
         const filterMode = this.mapFilterMode(userData.minfilter, userData.magFilter, userData.filterMode);
-        const wrapModeU = this.mapWrapMode(userData.wrapModeS ?? userData.wrapModeU);
-        const wrapModeV = this.mapWrapMode(userData.wrapModeT ?? userData.wrapModeV);
+        let wrapModeU = this.mapWrapMode(userData.wrapModeS ?? userData.wrapModeU);
+        let wrapModeV = this.mapWrapMode(userData.wrapModeT ?? userData.wrapModeV);
         const aniso = userData.anisotropy ?? userData.anisoLevel;
+
+        // Cocos default wrapMode is "repeat" (0). If we couldn't determine the wrapMode,
+        // default to Repeat (0) to match Cocos behavior, not LayaAir's default which may be Clamp (1).
+        if (wrapModeU === undefined) {
+            wrapModeU = 0; // Repeat
+            console.debug(`[MaterialConversion] wrapModeU not found for texture ${name}, defaulting to Repeat (0)`);
+        }
+        if (wrapModeV === undefined) {
+            wrapModeV = 0; // Repeat
+            console.debug(`[MaterialConversion] wrapModeV not found for texture ${name}, defaulting to Repeat (0)`);
+        }
 
         const propertyParams: any = {};
         if (filterMode !== undefined)
             propertyParams.filterMode = filterMode;
-        if (wrapModeU !== undefined)
-            propertyParams.wrapModeU = wrapModeU;
-        if (wrapModeV !== undefined)
-            propertyParams.wrapModeV = wrapModeV;
+        propertyParams.wrapModeU = wrapModeU;
+        propertyParams.wrapModeV = wrapModeV;
         if (aniso !== undefined)
             propertyParams.anisoLevel = aniso;
 
+        // 判断贴图是否是颜色贴图（需要 sRGB 标记）
+        // 法线贴图等非颜色贴图不需要 sRGB
+        const isNonColorTexture = /normal/i.test(name) || /metallic/i.test(name) || /roughness/i.test(name) || /occlusion/i.test(name) || /ao/i.test(name);
+        const sRGB = !isNonColorTexture;
+
+        // 检查 Cocos 的 fixAlphaTransparencyArtifacts 设置（在顶层 image 资源的 userData 中）
+        // 对应 LayaAir 的预乘 Alpha (pma)
+        let pma = false;
+        const topLevelUuid = cocosTextureUuid.includes("@") ? cocosTextureUuid.split("@")[0] : cocosTextureUuid;
+        const topLevelAsset = this.owner.allAssets.get(topLevelUuid);
+        if (topLevelAsset?.userData?.fixAlphaTransparencyArtifacts) {
+            pma = true;
+        }
+
+        if (pma) {
+            propertyParams.premultiplyAlpha = true;
+        }
+
         const textureEntry: any = {
             path: `res://${uuid}`,
-            constructParams: [width, height, 1, !!mipmap, false, false],
+            constructParams: [width, height, 1, !!mipmap, pma, sRGB],
             name
         };
 
@@ -1458,6 +1800,39 @@ export class MaterialConversion implements ICocosAssetConversion {
         if (existingIndex !== -1)
             textures.splice(existingIndex, 1);
         textures.push(textureEntry);
+    }
+
+    /**
+     * 从图片文件头读取实际宽高（支持 PNG 和 JPG）
+     */
+    private readImageDimensions(sourcePath?: string): { width: number, height: number } | null {
+        if (!sourcePath) return null;
+        try {
+            // 尝试找到实际图片文件路径（sourcePath 可能指向 .meta 或其他）
+            let imgPath = sourcePath;
+            if (!fs.existsSync(imgPath)) return null;
+
+            const stat = fs.statSync(imgPath);
+            if (stat.isDirectory()) return null;
+
+            const header = Buffer.alloc(30);
+            const fd = fs.openSync(imgPath, 'r');
+            fs.readSync(fd, header, 0, 30, 0);
+            fs.closeSync(fd);
+
+            // PNG: signature(8) + IHDR length(4) + "IHDR"(4) + width(4) + height(4)
+            if (header[0] === 0x89 && header[1] === 0x50 && header[2] === 0x4E && header[3] === 0x47) {
+                const width = header.readUInt32BE(16);
+                const height = header.readUInt32BE(20);
+                return { width, height };
+            }
+
+            // JPEG: 需要扫描 SOF0 标记
+            // 简单起见，对 JPEG 不处理，返回 null
+            return null;
+        } catch (e) {
+            return null;
+        }
     }
 
     private pushDefine(defines: Array<string>, define: string): void {

@@ -1,6 +1,7 @@
 import { ICocosAssetConversion, ICocosMigrationTool } from "../ICocosMigrationTool";
 import AnimationClipUtil from "../utils/AnimationClipUtil";
 import { AnimationClipWriter } from "../utils/AnimationClipWriter";
+import { AnimationClip2DWriter } from "../utils/AnimationClip2DWriter";
 import fs from "fs";
 export interface TypeAniData {
     fps?: number,
@@ -118,11 +119,19 @@ export class AnimationClipConversion implements ICocosAssetConversion {
             console.debug(`[AnimationClipConversion] Converted animation: ${sourcePath}`);
             console.debug(JSON.stringify(layaAnimData, null, 2));
 
-            // 修改目标路径扩展名为 .lani
-            targetPath = targetPath.replace(/\.anim$/i, '.lani');
-            const clip = AnimationClipUtil.aniDataToAnimationClip(layaAnimData);
-            const buffer = AnimationClipWriter.write(clip);
-            fs.writeFileSync(targetPath, new Uint8Array(buffer));
+            if (layaAnimData.is3D === false) {
+                // 2D 动画：生成 .mc 文件
+                targetPath = targetPath.replace(/\.anim$/i, '.mc');
+                const clip2D = this.aniDataToAnimationClip2D(layaAnimData);
+                const buffer = AnimationClip2DWriter.write(clip2D);
+                fs.writeFileSync(targetPath, new Uint8Array(buffer));
+            } else {
+                // 3D 动画：生成 .lani 文件
+                targetPath = targetPath.replace(/\.anim$/i, '.lani');
+                const clip = AnimationClipUtil.aniDataToAnimationClip(layaAnimData);
+                const buffer = AnimationClipWriter.write(clip);
+                fs.writeFileSync(targetPath, new Uint8Array(buffer));
+            }
 
             // 写入 meta 文件
             await IEditorEnv.utils.writeJsonAsync(targetPath + ".meta", { uuid: meta.uuid });
@@ -191,6 +200,15 @@ export class AnimationClipConversion implements ICocosAssetConversion {
         const wrapMode = cocosData.wrapMode ?? cocosData._wrapMode ?? 0;
         const loop = wrapMode === 2 || wrapMode === 3; // Loop 或 PingPong 表示循环
 
+        // propType 映射：告诉 AnimationClipUtil 哪些属性路径是向量类型
+        // DataType: Float=0, Vector2=5, Vector3=6, Vector4=7, Color=8
+        const propType: Record<string, number> = {
+            "transform.localPosition": 6,  // DataType.Vector3
+            "transform.localScale": 6,     // DataType.Vector3
+            "transform.localRotation": 7,  // DataType.Vector4
+            "transform.localRotationEuler": 6,  // DataType.Vector3
+        };
+
         // 构建 TypeAniData
         const aniData: TypeAniData = {
             fps: fps,
@@ -202,7 +220,7 @@ export class AnimationClipConversion implements ICocosAssetConversion {
                 name: "",
                 child: []
             },
-            propType: {}
+            propType: propType
         };
 
         // 转换事件
@@ -222,10 +240,51 @@ export class AnimationClipConversion implements ICocosAssetConversion {
             // 需要解析引用（__id__ 和 __type__）
             const resolvedTracks = this.resolveReferences(tracks, allObjects);
             console.debug(`[AnimationClipConversion] Resolved ${resolvedTracks.length} tracks`);
-            if (resolvedTracks.length > 0) {
-                console.debug(`[AnimationClipConversion] First track type: ${resolvedTracks[0]?.__type__}`);
+
+            // 检测是否包含 2D 特有的 track 类型
+            const has2DTracks = resolvedTracks.some((t: any) =>
+                t?.__type__ === "cc.animation.ColorTrack" ||
+                t?.__type__ === "cc.animation.RealTrack" ||
+                t?.__type__ === "cc.animation.SizeTrack"
+            );
+            // 检测是否有 ComponentPath（2D 组件动画的标志）
+            const hasComponentPath = resolvedTracks.some((t: any) => {
+                const paths = t?._binding?.path?._paths || t?._binding?.path;
+                if (!paths) return false;
+                const resolvedPaths = Array.isArray(paths) ? paths : (paths._paths || []);
+                return resolvedPaths.some((p: any) => {
+                    if (p && typeof p === "object" && p.__id__ !== undefined) {
+                        const resolved = allObjects[p.__id__];
+                        return resolved?.__type__ === "cc.animation.ComponentPath";
+                    }
+                    return p?.__type__ === "cc.animation.ComponentPath";
+                });
+            });
+
+            if (has2DTracks || hasComponentPath) {
+                aniData.is3D = false;
+                console.debug(`[AnimationClipConversion] Detected 2D animation`);
             }
-            aniData.aniData = this.convertTracksToAniLayer(resolvedTracks, allObjects, fps);
+
+            // 动态添加 propType 映射
+            for (const t of resolvedTracks) {
+                const pathInfo = this.parseTrackBindingPath(t, allObjects);
+                if (!pathInfo) continue;
+                const groupKey = this.buildGroupKey(t.__type__ || "", pathInfo.componentPath, pathInfo.propertyName);
+
+                // ColorTrack → Color type (DataType.Color = 8)
+                if (t.__type__ === "cc.animation.ColorTrack") {
+                    if (pathInfo.componentPath === "cc.Sprite") {
+                        propType["_Sprite.color"] = 8; // DataType.Color
+                    } else if (pathInfo.componentPath === "cc.Label") {
+                        propType["_Text.color"] = 8; // DataType.Color
+                    }
+                }
+                // SizeTrack → Vector2 type (DataType.Vector2 = 5)
+                // contentSize maps to width/height directly, handled as floats
+            }
+
+            aniData.aniData = this.convertTracksToAniLayer(resolvedTracks, allObjects, fps, aniData.is3D === false);
         } else {
             console.warn(`[AnimationClipConversion] No tracks found or tracks is not an array`);
         }
@@ -279,195 +338,93 @@ export class AnimationClipConversion implements ICocosAssetConversion {
 
     /**
      * 将 Cocos 的 tracks 数组转换为 TypeAniLayer 层级结构
+     * 支持 VectorTrack, ColorTrack, RealTrack, SizeTrack
      */
-    private convertTracksToAniLayer(tracks: any[], allObjects: any[], fps: number): TypeAniLayer {
+    private convertTracksToAniLayer(tracks: any[], allObjects: any[], fps: number, is2D: boolean = false): TypeAniLayer {
         const rootLayer: TypeAniLayer = {
             name: "",
             child: []
         };
 
         // 按路径和属性分组 tracks
-        // 结构：path -> property -> component (x/y/z) -> keys
+        // 结构：nodePath -> groupKey -> componentName -> keys
         const pathMap = new Map<string, Map<string, Map<string, TypeAniKeyData[]>>>();
 
         for (const track of tracks) {
-            if (!track) {
-                console.warn(`[AnimationClipConversion] Track is null or undefined`);
-                continue;
-            }
-            if (track.__type__ !== "cc.animation.VectorTrack") {
-                console.warn(`[AnimationClipConversion] Track type is ${track.__type__}, expected cc.animation.VectorTrack`);
-                continue;
-            }
-            console.debug(`[AnimationClipConversion] Processing VectorTrack`);
+            if (!track) continue;
 
-            // 获取 binding 和 path
-            let binding = track._binding;
-            if (!binding) continue;
+            const trackType: string = track.__type__ || "";
 
-            // 解析 binding.path 引用
-            let trackPath = binding.path;
-            if (trackPath && trackPath.__id__ !== undefined) {
-                trackPath = this.resolveReferences([trackPath], allObjects)[0];
-            }
-            if (!trackPath) continue;
+            // 解析 binding path（通用逻辑，支持所有 track 类型）
+            const pathInfo = this.parseTrackBindingPath(track, allObjects);
+            if (!pathInfo) continue;
 
-            // 解析路径：_paths 数组可能包含：
-            // 1. HierarchyPath 引用 + 属性名：[{__id__: 3}, "position"]
-            // 2. 只有属性名（绑定到根节点）：["scale"]
-            let paths = trackPath._paths || [];
-            if (paths.length === 0) {
-                console.warn(`[AnimationClipConversion] Empty paths array`);
-                continue;
-            }
+            const { nodePath, componentPath, propertyName } = pathInfo;
+            console.debug(`[AnimationClipConversion] Processing ${trackType}: node="${nodePath}", component="${componentPath}", prop="${propertyName}"`);
 
-            let nodePath = ""; // 空字符串表示根节点
-            let propertyName = "";
+            // 根据 track 类型提取 channels 和组件名
+            let channelEntries: Array<{ name: string, channel: any }> = [];
 
-            // 检查第一个元素是否是 HierarchyPath 引用
-            const firstPath = paths[0];
-            if (firstPath && typeof firstPath === "object" && firstPath.__id__ !== undefined) {
-                // 情况1：有 HierarchyPath 引用
-                let hierarchyPathRef = this.resolveReferences([firstPath], allObjects)[0];
-                if (hierarchyPathRef && hierarchyPathRef.path) {
-                    nodePath = hierarchyPathRef.path;
-                    // 保留 "root/" 前缀，不删除
+            switch (trackType) {
+                case "cc.animation.VectorTrack": {
+                    const channels = this.resolveReferences(track._channels || [], allObjects);
+                    const names = this.getVectorComponentNames(propertyName);
+                    for (let i = 0; i < channels.length && i < names.length; i++) {
+                        channelEntries.push({ name: names[i], channel: channels[i] });
+                    }
+                    break;
                 }
-                // 属性名是最后一个元素（应该是字符串）
-                const lastPath = paths[paths.length - 1];
-                if (typeof lastPath === "string") {
-                    propertyName = lastPath;
-                } else {
-                    console.warn(`[AnimationClipConversion] Last path element is not a string:`, lastPath);
+                case "cc.animation.ColorTrack": {
+                    const channels = this.resolveReferences(track._channels || [], allObjects);
+                    const names = ["r", "g", "b", "a"];
+                    for (let i = 0; i < channels.length && i < names.length; i++) {
+                        channelEntries.push({ name: names[i], channel: channels[i] });
+                    }
+                    break;
+                }
+                case "cc.animation.SizeTrack": {
+                    const channels = this.resolveReferences(track._channels || [], allObjects);
+                    const names = ["width", "height"];
+                    for (let i = 0; i < channels.length && i < names.length; i++) {
+                        channelEntries.push({ name: names[i], channel: channels[i] });
+                    }
+                    break;
+                }
+                case "cc.animation.RealTrack": {
+                    // RealTrack 使用 _channel（单数）而非 _channels
+                    let channel = track._channel;
+                    if (channel && channel.__id__ !== undefined) {
+                        channel = this.resolveReferences([channel], allObjects)[0];
+                    }
+                    if (channel) {
+                        channelEntries.push({ name: propertyName, channel });
+                    }
+                    break;
+                }
+                default:
+                    console.warn(`[AnimationClipConversion] Unsupported track type: ${trackType}`);
                     continue;
-                }
-            } else if (typeof firstPath === "string") {
-                // 情况2：直接是属性名（绑定到根节点）
-                propertyName = firstPath;
-                nodePath = ""; // 根节点
-            } else {
-                console.warn(`[AnimationClipConversion] Unknown path format:`, paths);
-                continue;
             }
 
-            if (!propertyName) {
-                console.warn(`[AnimationClipConversion] No property name found in paths:`, paths);
-                continue;
-            }
+            // 确定 groupKey（用于分组和后续的属性路径映射）
+            const groupKey = this.buildGroupKey(trackType, componentPath, propertyName);
 
-            console.debug(`[AnimationClipConversion] Node path: "${nodePath}", Property: "${propertyName}"`);
+            // 提取每个 channel 的关键帧
+            for (const entry of channelEntries) {
+                const keys = this.extractChannelKeyframes(entry.channel, allObjects, fps);
+                if (keys.length === 0) continue;
 
-            // 获取 channels（每个 channel 对应一个组件，如 x, y, z）
-            let channels = track._channels || [];
-            // 解析 channel 引用
-            channels = this.resolveReferences(channels, allObjects);
-            
-            // 根据属性类型确定组件名和数量
-            // position 只有 x, y, z（没有 w）
-            // scale 和 rotation 也只有 x, y, z
-            let componentNames: string[] = [];
-            let maxComponents = 3; // 默认最多3个组件
-            
-            if (propertyName === "position") {
-                componentNames = ["x", "y", "z"];
-                maxComponents = 3;
-            } else if (propertyName === "scale") {
-                componentNames = ["x", "y", "z"];
-                maxComponents = 3;
-            } else if (propertyName === "rotation" || propertyName === "eulerAngles") {
-                componentNames = ["x", "y", "z"];
-                maxComponents = 3;
-            } else {
-                // 其他属性使用默认的 x, y, z, w
-                componentNames = ["x", "y", "z", "w"];
-                maxComponents = 4;
-            }
-
-            for (let i = 0; i < channels.length && i < maxComponents; i++) {
-                let channel = channels[i];
-                if (!channel) continue;
-
-                // 解析 curve 引用
-                let curve = channel._curve;
-                if (curve && curve.__id__ !== undefined) {
-                    curve = this.resolveReferences([curve], allObjects)[0];
-                }
-                if (!curve) continue;
-                const times = curve._times || [];
-                const values = curve._values || [];
-
-                if (times.length !== values.length) continue;
-
-                const componentName = componentNames[i];
-
-                // 初始化路径映射
-                if (!pathMap.has(nodePath)) {
-                    pathMap.set(nodePath, new Map());
-                }
+                if (!pathMap.has(nodePath)) pathMap.set(nodePath, new Map());
                 const propMap = pathMap.get(nodePath)!;
-
-                if (!propMap.has(propertyName)) {
-                    propMap.set(propertyName, new Map());
-                }
-                const compMap = propMap.get(propertyName)!;
-
-                if (!compMap.has(componentName)) {
-                    compMap.set(componentName, []);
-                }
-                const keys = compMap.get(componentName)!;
-
-                // 转换关键帧
-                for (let j = 0; j < times.length; j++) {
-                    const time = times[j];
-                    const keyframeValue = values[j];
-                    
-                    if (!keyframeValue) continue;
-
-                    const frame = Math.round(time * fps);
-                    const value = keyframeValue.value ?? 0;
-
-                    const keyData: TypeAniKeyData = {
-                        f: frame,
-                        val: value
-                    };
-
-                    // 添加 tweenInfo（只有当存在有效值时才添加）
-                    const tweenInfo: TypeTweenInfo = {};
-                    let hasTweenInfo = false;
-
-                    // Tangent 值：只有当值不为 undefined、null 且不为 0 时才添加
-                    if (keyframeValue.leftTangent !== undefined && keyframeValue.leftTangent !== null && keyframeValue.leftTangent !== 0) {
-                        tweenInfo.inTangent = keyframeValue.leftTangent;
-                        hasTweenInfo = true;
-                    }
-                    if (keyframeValue.rightTangent !== undefined && keyframeValue.rightTangent !== null && keyframeValue.rightTangent !== 0) {
-                        tweenInfo.outTangent = keyframeValue.rightTangent;
-                        hasTweenInfo = true;
-                    }
-                    // Weight 值：只有当值不为 undefined、null 且不为 1 时才添加
-                    if (keyframeValue.leftTangentWeight !== undefined && keyframeValue.leftTangentWeight !== null && keyframeValue.leftTangentWeight !== 1) {
-                        tweenInfo.inWeight = keyframeValue.leftTangentWeight;
-                        hasTweenInfo = true;
-                    }
-                    if (keyframeValue.rightTangentWeight !== undefined && keyframeValue.rightTangentWeight !== null && keyframeValue.rightTangentWeight !== 1) {
-                        tweenInfo.outWeight = keyframeValue.rightTangentWeight;
-                        hasTweenInfo = true;
-                    }
-
-                    // 只有当 tweenInfo 有内容时才添加到 keyData
-                    if (hasTweenInfo) {
-                        keyData.tweenInfo = tweenInfo;
-                    }
-
-                    keys.push(keyData);
-                }
+                if (!propMap.has(groupKey)) propMap.set(groupKey, new Map());
+                const compMap = propMap.get(groupKey)!;
+                if (!compMap.has(entry.name)) compMap.set(entry.name, []);
+                compMap.get(entry.name)!.push(...keys);
             }
         }
 
         // 构建层级结构
         for (const [nodePath, propMap] of pathMap.entries()) {
-            // nodePath 可能是空字符串（根节点）或 "root/xxx/yyy" 格式
-            // 保留 "root" 节点，不删除
             const pathParts = nodePath ? nodePath.split("/").filter(p => p) : [];
             let currentLayer = rootLayer;
 
@@ -475,92 +432,446 @@ export class AnimationClipConversion implements ICocosAssetConversion {
             for (const part of pathParts) {
                 let childLayer = currentLayer.child?.find(c => c.name === part);
                 if (!childLayer) {
-                    childLayer = {
-                        name: part,
-                        child: []
-                    };
-                    if (!currentLayer.child) {
-                        currentLayer.child = [];
-                    }
+                    childLayer = { name: part, child: [] };
+                    if (!currentLayer.child) currentLayer.child = [];
                     currentLayer.child.push(childLayer);
                 }
                 currentLayer = childLayer;
             }
 
-            // 添加属性节点
-            if (!currentLayer.prop) {
-                currentLayer.prop = [];
-            }
+            if (!currentLayer.prop) currentLayer.prop = [];
 
-            for (const [propertyName, compMap] of propMap.entries()) {
-                // 映射 Cocos 属性名到 Laya 属性名
-                let layaSubPropertyName: string | null = null;
-                if (propertyName === "position") {
-                    layaSubPropertyName = "localPosition";
-                } else if (propertyName === "scale") {
-                    layaSubPropertyName = "localScale";
-                } else if (propertyName === "rotation" || propertyName === "eulerAngles") {
-                    layaSubPropertyName = "localRotation";
-                }
-
-                // 如果属性是 transform 相关的，需要三层嵌套结构：transform -> localPosition/localScale/localRotation -> x/y/z
-                if (layaSubPropertyName) {
-                    // 1. 查找或创建 transform 节点
-                    let transformProp = currentLayer.prop?.find(p => p.name === "transform");
-                    if (!transformProp) {
-                        transformProp = {
-                            name: "transform",
-                            prop: []
-                        };
-                        currentLayer.prop!.push(transformProp);
-                    }
-                    if (!transformProp.prop) {
-                        transformProp.prop = [];
-                    }
-
-                    // 2. 查找或创建 localPosition/localScale/localRotation 节点
-                    let subProp = transformProp.prop.find(p => p.name === layaSubPropertyName);
-                    if (!subProp) {
-                        subProp = {
-                            name: layaSubPropertyName,
-                            prop: []
-                        };
-                        transformProp.prop.push(subProp);
-                    }
-                    if (!subProp.prop) {
-                        subProp.prop = [];
-                    }
-
-                    // 3. 添加组件节点（x, y, z）
-                    for (const [componentName, keys] of compMap.entries()) {
-                        // 按帧数排序
-                        keys.sort((a, b) => a.f - b.f);
-
-                        const propLayer: TypeAniLayer = {
-                            name: componentName,
-                            keys: keys
-                        };
-
-                        subProp.prop.push(propLayer);
-                    }
-                } else {
-                    // 其他属性直接添加
-                    for (const [componentName, keys] of compMap.entries()) {
-                        // 按帧数排序
-                        keys.sort((a, b) => a.f - b.f);
-
-                        const propLayer: TypeAniLayer = {
-                            name: componentName,
-                            keys: keys
-                        };
-
-                        currentLayer.prop!.push(propLayer);
-                    }
-                }
+            for (const [groupKey, compMap] of propMap.entries()) {
+                this.buildPropertyTree(currentLayer, groupKey, compMap, is2D);
             }
         }
 
         return rootLayer;
+    }
+
+    /**
+     * 解析 track 的 binding path，提取 nodePath、componentPath、propertyName
+     */
+    private parseTrackBindingPath(track: any, allObjects: any[]): { nodePath: string, componentPath: string, propertyName: string } | null {
+        let binding = track._binding;
+        if (!binding) return null;
+
+        let trackPath = binding.path;
+        if (trackPath && trackPath.__id__ !== undefined) {
+            trackPath = this.resolveReferences([trackPath], allObjects)[0];
+        }
+        if (!trackPath) return null;
+
+        const paths = trackPath._paths || [];
+        if (paths.length === 0) return null;
+
+        let nodePath = "";
+        let componentPath = "";
+        let propertyName = "";
+
+        // 解析所有 path 元素
+        for (const p of paths) {
+            if (typeof p === "string") {
+                propertyName = p;
+            } else if (p && typeof p === "object") {
+                let resolved = p;
+                if (p.__id__ !== undefined) {
+                    resolved = this.resolveReferences([p], allObjects)[0];
+                }
+                if (!resolved) continue;
+
+                if (resolved.__type__ === "cc.animation.HierarchyPath") {
+                    nodePath = resolved.path || "";
+                    // "/" 表示当前节点（根节点），规范化为空字符串
+                    if (nodePath === "/") nodePath = "";
+                } else if (resolved.__type__ === "cc.animation.ComponentPath") {
+                    componentPath = resolved.component || "";
+                }
+            }
+        }
+
+        if (!propertyName) return null;
+        return { nodePath, componentPath, propertyName };
+    }
+
+    /**
+     * 获取 VectorTrack 的分量名
+     */
+    private getVectorComponentNames(propertyName: string): string[] {
+        if (propertyName === "rotation") return ["x", "y", "z", "w"];
+        return ["x", "y", "z"]; // position, scale, eulerAngles, etc.
+    }
+
+    /**
+     * 构建 groupKey：用于在 pathMap 中分组以及后续映射到 Laya 属性路径
+     * 格式：
+     *   - 无组件路径（transform属性）："position", "scale", "rotation", "eulerAngles"
+     *   - 有组件路径："cc.Widget:top", "cc.Sprite:color", "cc.UITransform:contentSize"
+     */
+    private buildGroupKey(trackType: string, componentPath: string, propertyName: string): string {
+        if (componentPath) {
+            return `${componentPath}:${propertyName}`;
+        }
+        return propertyName;
+    }
+
+    /**
+     * 从 channel 中提取关键帧数据
+     */
+    private extractChannelKeyframes(channel: any, allObjects: any[], fps: number): TypeAniKeyData[] {
+        if (!channel) return [];
+
+        let curve = channel._curve;
+        if (curve && curve.__id__ !== undefined) {
+            curve = this.resolveReferences([curve], allObjects)[0];
+        }
+        if (!curve) return [];
+
+        const times = curve._times || [];
+        const values = curve._values || [];
+        if (times.length !== values.length) return [];
+
+        const keys: TypeAniKeyData[] = [];
+
+        for (let j = 0; j < times.length; j++) {
+            const time = times[j];
+            const keyframeValue = values[j];
+            if (!keyframeValue) continue;
+
+            const frame = Math.round(time * fps);
+            const value = keyframeValue.value ?? 0;
+
+            const keyData: TypeAniKeyData = { f: frame, val: value };
+
+            // 添加 tweenInfo
+            const tweenInfo: TypeTweenInfo = {};
+            let hasTweenInfo = false;
+
+            if (keyframeValue.leftTangent !== undefined && keyframeValue.leftTangent !== null && keyframeValue.leftTangent !== 0) {
+                tweenInfo.inTangent = keyframeValue.leftTangent;
+                hasTweenInfo = true;
+            }
+            if (keyframeValue.rightTangent !== undefined && keyframeValue.rightTangent !== null && keyframeValue.rightTangent !== 0) {
+                tweenInfo.outTangent = keyframeValue.rightTangent;
+                hasTweenInfo = true;
+            }
+            if (keyframeValue.leftTangentWeight !== undefined && keyframeValue.leftTangentWeight !== null && keyframeValue.leftTangentWeight !== 1) {
+                tweenInfo.inWeight = keyframeValue.leftTangentWeight;
+                hasTweenInfo = true;
+            }
+            if (keyframeValue.rightTangentWeight !== undefined && keyframeValue.rightTangentWeight !== null && keyframeValue.rightTangentWeight !== 1) {
+                tweenInfo.outWeight = keyframeValue.rightTangentWeight;
+                hasTweenInfo = true;
+            }
+
+            if (hasTweenInfo) {
+                keyData.tweenInfo = tweenInfo;
+            }
+
+            keys.push(keyData);
+        }
+
+        return keys;
+    }
+
+    /**
+     * 根据 groupKey 将分量数据添加到属性树中
+     *
+     * 3D 模式 Cocos → Laya 属性路径映射：
+     *   position → transform.localPosition.x/y/z
+     *   scale → transform.localScale.x/y/z
+     *   rotation → transform.localRotation.x/y/z/w
+     *   eulerAngles → transform.localRotationEuler.x/y/z
+     *
+     * 2D 模式 Cocos → Laya 属性路径映射：
+     *   position → x, y (平铺属性)
+     *   scale → scaleX, scaleY (平铺属性)
+     *   rotation/eulerAngles → rotation (仅 z 分量)
+     *   cc.Sprite:color → color(合并rgb为"#rrggbb"字符串) + alpha(a通道 0-255→0-1)
+     *   cc.Label:color → color(合并rgb为"#rrggbb"字符串) + alpha(a通道 0-255→0-1)
+     *   cc.Widget:top → y（height=0时等价）, cc.Widget:left → x（width=0时等价）
+     *   cc.Widget:bottom → y（designHeight - bottom）, cc.Widget:right → x（designWidth - right）
+     *   cc.UIOpacity:opacity → alpha
+     *   cc.UITransform:contentSize → width/height
+     */
+    private buildPropertyTree(currentLayer: TypeAniLayer, groupKey: string, compMap: Map<string, TypeAniKeyData[]>, is2D: boolean = false): void {
+        // 1. Transform 属性（无组件路径）
+        const transformKeys = ["position", "scale", "rotation", "eulerAngles"];
+
+        if (transformKeys.includes(groupKey)) {
+            if (is2D) {
+                // ========== 2D 模式：平铺属性 ==========
+                this.buildPropertyTree2DTransform(currentLayer, groupKey, compMap);
+            } else {
+                // ========== 3D 模式：transform.localXxx.x/y/z ==========
+                const transformMap: Record<string, string> = {
+                    "position": "localPosition",
+                    "scale": "localScale",
+                    "rotation": "localRotation",
+                    "eulerAngles": "localRotationEuler",
+                };
+                const layaSubName = transformMap[groupKey];
+
+                let transformProp = currentLayer.prop?.find(p => p.name === "transform");
+                if (!transformProp) {
+                    transformProp = { name: "transform", prop: [] };
+                    currentLayer.prop!.push(transformProp);
+                }
+                if (!transformProp.prop) transformProp.prop = [];
+
+                let subProp = transformProp.prop.find(p => p.name === layaSubName);
+                if (!subProp) {
+                    subProp = { name: layaSubName, prop: [] };
+                    transformProp.prop.push(subProp);
+                }
+                if (!subProp.prop) subProp.prop = [];
+
+                for (const [compName, keys] of compMap.entries()) {
+                    keys.sort((a, b) => a.f - b.f);
+                    subProp.prop.push({ name: compName, keys });
+                }
+            }
+            return;
+        }
+
+        // 2. 组件属性（带 ComponentPath）
+        if (groupKey.includes(":")) {
+            const [cocosComponent, propName] = groupKey.split(":");
+
+            // 映射 Cocos 组件名到 Laya 组件名
+            // 2D 模式：GWidget 节点自身有 top/bottom/left/right 属性（不需要组件）
+            //         Image/Text 在 Laya 中是节点类型（不是组件），属性直接访问
+            // 3D 模式：使用内部属性名（_Sprite, _Text, _Widget）
+            const componentMap: Record<string, string> = is2D ? {
+                "cc.Sprite": "",      // 2D 中 Image 是节点本身，属性直接访问
+                "cc.Label": "",       // 2D 中 Text 是节点本身，属性直接访问
+                "cc.Widget": "",      // 2D 中 GWidget 节点自身有 top/bottom/left/right
+                "cc.UIOpacity": "",
+                "cc.UITransform": "",
+            } : {
+                "cc.Sprite": "_Sprite",
+                "cc.Label": "_Text",
+                "cc.Widget": "_Widget",
+                "cc.UIOpacity": "",
+                "cc.UITransform": "",
+            };
+
+            const layaComponent = componentMap[cocosComponent];
+
+            // 特殊处理：cc.UITransform.contentSize → 直接映射到 width/height
+            if (cocosComponent === "cc.UITransform" && propName === "contentSize") {
+                for (const [compName, keys] of compMap.entries()) {
+                    keys.sort((a, b) => a.f - b.f);
+                    currentLayer.prop!.push({ name: compName, keys }); // "width" / "height"
+                }
+                return;
+            }
+
+            // 特殊处理：cc.UIOpacity.opacity → alpha
+            if (cocosComponent === "cc.UIOpacity" && propName === "opacity") {
+                for (const [, keys] of compMap.entries()) {
+                    keys.sort((a, b) => a.f - b.f);
+                    // opacity (0-255) → alpha (0-1) 转换
+                    const alphaKeys = keys.map(k => ({
+                        ...k,
+                        val: typeof k.val === "number" ? k.val / 255 : k.val
+                    }));
+                    currentLayer.prop!.push({ name: "alpha", keys: alphaKeys });
+                }
+                return;
+            }
+
+            // 特殊处理：2D 模式下 ColorTrack (color 属性)
+            // Laya 2D 的 color 是字符串 "#rrggbb"，不支持 .r/.g/.b/.a 分量动画
+            // 需要将 r/g/b 合并为 color 字符串，a 通道映射为 alpha
+            if (is2D && propName === "color" && (cocosComponent === "cc.Sprite" || cocosComponent === "cc.Label")) {
+                this.buildColorAnimation2D(currentLayer, compMap);
+                return;
+            }
+
+            // 特殊处理：2D 模式下 cc.Widget.top/bottom/left/right → 直接映射为节点位置属性
+            // GWidget 的 top/left 是计算属性(getter/setter)，IDE 不识别为可动画化属性
+            // top → y（当 height=0 时 top=y，直接等价）
+            // bottom → y（y = designHeight - bottom）
+            // left → x（当 width=0 时 left=x，直接等价）
+            // right → x（x = designWidth - right）
+            if (is2D && cocosComponent === "cc.Widget") {
+                if (propName === "top") {
+                    // top → y：对于 height=0 的节点完全等价
+                    for (const [, keys] of compMap.entries()) {
+                        keys.sort((a, b) => a.f - b.f);
+                        currentLayer.prop!.push({ name: "y", keys });
+                    }
+                    return;
+                }
+                if (propName === "left") {
+                    // left → x：对于 width=0 的节点完全等价
+                    for (const [, keys] of compMap.entries()) {
+                        keys.sort((a, b) => a.f - b.f);
+                        currentLayer.prop!.push({ name: "x", keys });
+                    }
+                    return;
+                }
+                if (propName === "bottom") {
+                    // bottom → y：y = designHeight - bottom
+                    const designH = this.owner.projectConfig?.general?.designResolution?.height || 960;
+                    for (const [, keys] of compMap.entries()) {
+                        keys.sort((a, b) => a.f - b.f);
+                        const yKeys = keys.map(k => ({
+                            ...k,
+                            val: typeof k.val === "number" ? designH - k.val : k.val
+                        }));
+                        currentLayer.prop!.push({ name: "y", keys: yKeys });
+                    }
+                    return;
+                }
+                if (propName === "right") {
+                    // right → x：x = designWidth - right
+                    const designW = this.owner.projectConfig?.general?.designResolution?.width || 640;
+                    for (const [, keys] of compMap.entries()) {
+                        keys.sort((a, b) => a.f - b.f);
+                        const xKeys = keys.map(k => ({
+                            ...k,
+                            val: typeof k.val === "number" ? designW - k.val : k.val
+                        }));
+                        currentLayer.prop!.push({ name: "x", keys: xKeys });
+                    }
+                    return;
+                }
+            }
+
+            if (layaComponent !== undefined && layaComponent !== "") {
+                // 有 Laya 组件映射：创建 组件 → 属性 → 分量 结构
+                let compProp = currentLayer.prop?.find(p => p.name === layaComponent);
+                if (!compProp) {
+                    compProp = { name: layaComponent, prop: [] };
+                    currentLayer.prop!.push(compProp);
+                }
+                if (!compProp.prop) compProp.prop = [];
+
+                // ColorTrack 有多个分量（r/g/b/a），需要嵌套
+                if (compMap.size > 1) {
+                    // 多分量属性（如 color.r/g/b/a）
+                    let subProp = compProp.prop.find(p => p.name === propName);
+                    if (!subProp) {
+                        subProp = { name: propName, prop: [] };
+                        compProp.prop.push(subProp);
+                    }
+                    if (!subProp.prop) subProp.prop = [];
+
+                    for (const [compName, keys] of compMap.entries()) {
+                        keys.sort((a, b) => a.f - b.f);
+                        subProp.prop.push({ name: compName, keys });
+                    }
+                } else {
+                    // 单值属性（如 Widget.top）— RealTrack
+                    for (const [, keys] of compMap.entries()) {
+                        keys.sort((a, b) => a.f - b.f);
+                        compProp.prop.push({ name: propName, keys });
+                    }
+                }
+            } else {
+                // 无 Laya 组件映射：直接放到节点上
+                if (compMap.size > 1) {
+                    let subProp: TypeAniLayer = { name: propName, prop: [] };
+                    currentLayer.prop!.push(subProp);
+                    for (const [compName, keys] of compMap.entries()) {
+                        keys.sort((a, b) => a.f - b.f);
+                        subProp.prop!.push({ name: compName, keys });
+                    }
+                } else {
+                    for (const [compName, keys] of compMap.entries()) {
+                        keys.sort((a, b) => a.f - b.f);
+                        currentLayer.prop!.push({ name: compName, keys });
+                    }
+                }
+            }
+            return;
+        }
+
+        // 3. 其他属性（无组件路径，非 transform）
+        for (const [compName, keys] of compMap.entries()) {
+            keys.sort((a, b) => a.f - b.f);
+            currentLayer.prop!.push({ name: compName, keys });
+        }
+    }
+
+    /**
+     * 2D 模式下 transform 属性映射为平铺属性
+     * position.x/y → x, y
+     * scale.x/y → scaleX, scaleY
+     * rotation.z / eulerAngles.z → rotation
+     */
+    private buildPropertyTree2DTransform(currentLayer: TypeAniLayer, groupKey: string, compMap: Map<string, TypeAniKeyData[]>): void {
+        if (!currentLayer.prop) currentLayer.prop = [];
+
+        switch (groupKey) {
+            case "position": {
+                // x, y 直接作为节点属性
+                for (const [compName, keys] of compMap.entries()) {
+                    if (compName === "x" || compName === "y") {
+                        keys.sort((a, b) => a.f - b.f);
+                        currentLayer.prop.push({ name: compName, keys });
+                    }
+                    // z 分量在 2D 中忽略
+                }
+                break;
+            }
+            case "scale": {
+                // x → scaleX, y → scaleY
+                for (const [compName, keys] of compMap.entries()) {
+                    keys.sort((a, b) => a.f - b.f);
+                    if (compName === "x") {
+                        currentLayer.prop.push({ name: "scaleX", keys });
+                    } else if (compName === "y") {
+                        currentLayer.prop.push({ name: "scaleY", keys });
+                    }
+                    // z 分量在 2D 中忽略
+                }
+                break;
+            }
+            case "rotation":
+            case "eulerAngles": {
+                // 仅取 z 分量作为 rotation（角度）
+                const zKeys = compMap.get("z");
+                if (zKeys) {
+                    zKeys.sort((a, b) => a.f - b.f);
+                    currentLayer.prop.push({ name: "rotation", keys: zKeys });
+                }
+                break;
+            }
+        }
+    }
+
+    /**
+     * 2D 模式下将 ColorTrack 的 r/g/b/a 分量合并为 Laya 兼容格式
+     * - r/g/b 合并为 color 属性（"#rrggbb" 字符串格式）
+     * - a 通道单独映射为 alpha 属性（0-255 → 0-1）
+     *
+     * Laya 2D 节点的 color 是字符串类型（如 "#ffffff"），不支持 .r/.g/.b 分量动画
+     */
+    private buildColorAnimation2D(currentLayer: TypeAniLayer, compMap: Map<string, TypeAniKeyData[]>): void {
+        if (!currentLayer.prop) currentLayer.prop = [];
+
+        const rKeys = compMap.get("r") || [];
+        const gKeys = compMap.get("g") || [];
+        const bKeys = compMap.get("b") || [];
+        const aKeys = compMap.get("a") || [];
+
+        // 处理 alpha 通道 → 映射为独立的 alpha 属性
+        if (aKeys.length > 0) {
+            const sortedAKeys = [...aKeys].sort((a, b) => a.f - b.f);
+            const alphaKeys: TypeAniKeyData[] = sortedAKeys.map(k => ({
+                ...k,
+                val: typeof k.val === "number" ? k.val / 255 : k.val
+            }));
+            currentLayer.prop.push({ name: "alpha", keys: alphaKeys });
+        }
+
+        // r/g/b 通道在 Laya 2D 中无法单独动画化（color 是字符串 "#rrggbb"），直接跳过
+        if (rKeys.length > 0 || gKeys.length > 0 || bKeys.length > 0) {
+            console.debug("[AnimationClipConversion] Skipping r/g/b color channels for 2D (Laya color is string)");
+        }
     }
 
     /**
@@ -626,6 +937,154 @@ export class AnimationClipConversion implements ICocosAssetConversion {
         }
 
         return keyData;
+    }
+
+    /**
+     * 将 TypeAniData 转换为 Laya AnimationClip2D（2D 动画）
+     * 2D 使用 KeyframeNode2D + Keyframe2D，帧数据直接存储 TypeAniKey
+     */
+    private aniDataToAnimationClip2D(data: TypeAniData): Laya.AnimationClip2D {
+        const clip = new Laya.AnimationClip2D();
+        const fps = data.fps || 30;
+        clip._frameRate = fps;
+        clip.islooping = data.loop || false;
+        clip._duration = (data.totalFrame || 0) / fps;
+
+        // 转换事件
+        if (data.event && data.event.length > 0) {
+            for (const evt of data.event) {
+                const event = new Laya.Animation2DEvent();
+                event.time = Math.min(evt.time, clip._duration);
+                event.eventName = evt.eventName || "";
+                event.params = evt.params || [];
+                clip.addEvent(event);
+            }
+        }
+
+        // 收集所有 KeyframeNode2D
+        const nodesDic: Record<string, Laya.KeyframeNode2D> = {};
+        const nodesMap: Record<string, Laya.KeyframeNode2D[]> = {};
+
+        if (data.aniData) {
+            // ownerPath 必须以 "" 开头（根节点占位符，Animator2D 解析时跳过）
+            this.collectKeyframeNodes2D(data.aniData, [""], [], nodesDic, nodesMap, fps);
+        }
+
+        // 填充 clip._nodes
+        clip._nodesDic = nodesDic;
+        clip._nodesMap = nodesMap;
+        const nodeKeys = Object.keys(nodesDic);
+        const nodeList = new Laya.KeyframeNodeList2D();
+        nodeList.count = nodeKeys.length;
+        for (let i = 0; i < nodeKeys.length; i++) {
+            const node = nodesDic[nodeKeys[i]];
+            node._indexInList = i;
+            nodeList.setNodeByIndex(i, node);
+        }
+        clip._nodes = nodeList;
+
+        return clip;
+    }
+
+    /**
+     * 递归收集 2D 关键帧节点
+     */
+    private collectKeyframeNodes2D(
+        layer: TypeAniLayer,
+        ownerPaths: string[],
+        propNames: string[],
+        nodesDic: Record<string, Laya.KeyframeNode2D>,
+        nodesMap: Record<string, Laya.KeyframeNode2D[]>,
+        fps: number
+    ): void {
+        // 构建当前 owner 路径
+        const currentOwnerPaths = layer.name.length > 0
+            ? ownerPaths.concat(layer.name)
+            : ownerPaths.concat();
+
+        const targetPath = currentOwnerPaths.join("/");
+
+        // 处理 prop（属性关键帧）
+        if (layer.prop) {
+            const keyFrameNodes: Laya.KeyframeNode2D[] = [];
+            this.processProps2D(layer.prop, currentOwnerPaths, [], nodesDic, keyFrameNodes, fps);
+            if (keyFrameNodes.length > 0) {
+                nodesMap[targetPath] = keyFrameNodes;
+            }
+        }
+
+        // 递归处理子节点
+        if (layer.child) {
+            for (const child of layer.child) {
+                this.collectKeyframeNodes2D(child, currentOwnerPaths, [], nodesDic, nodesMap, fps);
+            }
+        }
+    }
+
+    /**
+     * 递归处理属性并创建 2D 关键帧节点
+     */
+    private processProps2D(
+        props: TypeAniLayer[],
+        ownerPaths: string[],
+        propNames: string[],
+        nodesDic: Record<string, Laya.KeyframeNode2D>,
+        keyFrameNodes: Laya.KeyframeNode2D[],
+        fps: number
+    ): void {
+        for (const prop of props) {
+            if (prop.keys) {
+                // 叶节点：有关键帧数据
+                const node = new Laya.KeyframeNode2D();
+
+                // 设置 ownerPath
+                node._setOwnerPathCount(ownerPaths.length);
+                for (let i = 0; i < ownerPaths.length; i++) {
+                    node._setOwnerPathByIndex(i, ownerPaths[i]);
+                }
+
+                // 设置 property 路径
+                const fullPropNames = propNames.concat(prop.name);
+                node._setPropertyCount(fullPropNames.length);
+                for (let i = 0; i < fullPropNames.length; i++) {
+                    node._setPropertyByIndex(i, fullPropNames[i]);
+                }
+
+                // 设置路径字符串
+                const nodePath = node._joinOwnerPath("/");
+                const propertyPath = node._joinProperty(".");
+                node.fullPath = nodePath + (propertyPath ? "." + propertyPath : "");
+                node.nodePath = nodePath;
+
+                // 设置关键帧
+                const sortedKeys = [...prop.keys].sort((a, b) => a.f - b.f);
+                node._setKeyframeCount(sortedKeys.length);
+                for (let i = 0; i < sortedKeys.length; i++) {
+                    const keyData = sortedKeys[i];
+                    const kf = new Laya.Keyframe2D();
+                    kf.time = keyData.f / fps; // 帧转秒
+                    kf.data = {
+                        f: keyData.f,
+                        val: keyData.val,
+                        tweenType: keyData.tweenType,
+                        tweenInfo: keyData.tweenInfo ? {
+                            outTangent: keyData.tweenInfo.outTangent,
+                            outWeight: keyData.tweenInfo.outWeight,
+                            inTangent: keyData.tweenInfo.inTangent,
+                            inWeight: keyData.tweenInfo.inWeight,
+                        } : undefined,
+                        extend: keyData.extend,
+                    } as Laya.TypeAniKey;
+                    node._keyFrames[i] = kf;
+                }
+
+                nodesDic[node.fullPath] = node;
+                keyFrameNodes.push(node);
+            } else if (prop.prop) {
+                // 中间节点：继续递归
+                this.processProps2D(prop.prop, ownerPaths, propNames.concat(prop.name), nodesDic, keyFrameNodes, fps);
+            }
+        }
     }
 
     /**

@@ -29,6 +29,7 @@ const CULL_MODE_MAP: Record<string, string> = {
 interface ShaderPass {
     vert?: string;
     frag?: string;
+    phase?: string;
     blendState?: any;
     depthStencilState?: any;
     rasterizerState?: any;
@@ -41,18 +42,166 @@ interface Technique {
 }
 
 export class ShaderConversion implements ICocosAssetConversion {
+    private _copiedShaders: Set<string> = new Set();
+    private _targetEffectsRoot: string | null = null;
+    private _pluginShadersPath: string | null = null;
+
     constructor(private readonly _owner: ICocosMigrationTool) { }
+
+    /**
+     * 查找插件 shaders 目录，多种策略逐级回退：
+     * 1. __dirname 相对路径（适用于源码目录直接运行）
+     * 2. 从 _targetEffectsRoot 推导 assets 根目录，遍历查找 CocosMigrationPlugin/shaders
+     * 3. 从 __dirname 向上遍历查找 shaders 兄弟目录
+     */
+    private findPluginShadersPath(): string | null {
+        if (this._pluginShadersPath !== null) return this._pluginShadersPath;
+
+        // 策略1: __dirname 相对路径（原有逻辑）
+        const fromDirname = fpath.join(fpath.resolve(__dirname, "..", ".."), "shaders");
+        if (fs.existsSync(fromDirname)) {
+            this._pluginShadersPath = fromDirname;
+            return fromDirname;
+        }
+
+        // 策略2: 从 _targetEffectsRoot 推导 assets 目录，搜索 CocosMigrationPlugin/shaders
+        if (this._targetEffectsRoot) {
+            const assetsRoot = this._targetEffectsRoot.replace(/[/\\]cc-internal[/\\]effects$/i, "");
+            // 在 assets 目录下递归查找 CocosMigrationPlugin/shaders（限制深度避免性能问题）
+            const found = this.findShadersInDir(assetsRoot, 4);
+            if (found) {
+                this._pluginShadersPath = found;
+                return found;
+            }
+        }
+
+        // 策略3: 从 __dirname 向上逐级查找包含 shaders 目录的 CocosMigrationPlugin
+        let dir = __dirname;
+        for (let i = 0; i < 10; i++) {
+            const candidate = fpath.join(dir, "shaders");
+            if (fs.existsSync(candidate) && fpath.basename(dir) === "CocosMigrationPlugin") {
+                this._pluginShadersPath = candidate;
+                return candidate;
+            }
+            // 也检查同级 shaders 目录
+            const siblingCandidate = fpath.join(dir, "CocosMigrationPlugin", "shaders");
+            if (fs.existsSync(siblingCandidate)) {
+                this._pluginShadersPath = siblingCandidate;
+                return siblingCandidate;
+            }
+            const parent = fpath.dirname(dir);
+            if (parent === dir) break;
+            dir = parent;
+        }
+
+        this._pluginShadersPath = "";  // 标记为已搜索但未找到
+        return null;
+    }
+
+    /**
+     * 在目录中递归查找 CocosMigrationPlugin/shaders
+     */
+    private findShadersInDir(dir: string, maxDepth: number): string | null {
+        if (maxDepth <= 0) return null;
+        try {
+            const entries = fs.readdirSync(dir, { withFileTypes: true });
+            for (const entry of entries) {
+                if (!entry.isDirectory()) continue;
+                if (entry.name === "CocosMigrationPlugin") {
+                    const shadersPath = fpath.join(dir, entry.name, "shaders");
+                    if (fs.existsSync(shadersPath)) return shadersPath;
+                }
+            }
+            // 递归子目录
+            for (const entry of entries) {
+                if (!entry.isDirectory() || entry.name.startsWith(".") || entry.name === "node_modules") continue;
+                const found = this.findShadersInDir(fpath.join(dir, entry.name), maxDepth - 1);
+                if (found) return found;
+            }
+        } catch { }
+        return null;
+    }
 
     async run(sourcePath: string, targetPath: string, meta: any) {
         const ext = fpath.extname(sourcePath).toLowerCase();
         if (ext === ".effect") {
+            // 从 targetPath 推导出 effects 根目录，用于 complete() 部署 shader
+            if (!this._targetEffectsRoot) {
+                // targetPath 类似 .../cc-internal/effects/legacy/xxx.shader
+                // 找到 cc-internal/effects 目录
+                const normalized = targetPath.replace(/\\/g, "/");
+                const ccInternalIdx = normalized.indexOf("/cc-internal/effects");
+                if (ccInternalIdx >= 0) {
+                    this._targetEffectsRoot = normalized.substring(0, ccInternalIdx) + "/cc-internal/effects";
+                }
+            }
             await this.convertEffect(sourcePath, targetPath, meta);
+        }
+    }
+    
+    /**
+     * 清理 cc-internal/effects 中与插件预置 shader 同名的冲突文件
+     * IDE 按名字查找 shader，找到第一个就停止，所以只保留插件目录中的一份
+     * 在所有转换完成后调用
+     */
+    async complete() {
+        const targetShadersPath = this._targetEffectsRoot;
+        if (!targetShadersPath) {
+            console.warn("[ShaderConversion] Cannot clean up shaders: target effects root not determined (no .effect files were converted)");
+            return;
+        }
+
+        // 自动查找插件 shaders 目录（不依赖固定路径）
+        const pluginShadersPath = this.findPluginShadersPath();
+        if (!pluginShadersPath) {
+            console.warn(`[ShaderConversion] Plugin shaders not found, skipping cleanup. Searched from __dirname=${__dirname} and assetsRoot`);
+            return;
+        }
+
+        // 获取插件中所有预置 shader 的文件名
+        let pluginShaderFiles: string[];
+        try {
+            pluginShaderFiles = (await fs.promises.readdir(pluginShadersPath)).filter(f => f.endsWith(".shader"));
+        } catch {
+            return;
+        }
+
+        // 删除 cc-internal/effects/ 和 cc-internal/effects/legacy/ 中与插件 shader 同名的冲突文件
+        // 这样 IDE 只会找到插件目录中唯一的那份
+        const dirsToClean = [targetShadersPath, fpath.join(targetShadersPath, "legacy")];
+        for (const dir of dirsToClean) {
+            if (!fs.existsSync(dir)) continue;
+            for (const file of pluginShaderFiles) {
+                const conflictPath = fpath.join(dir, file);
+                if (fs.existsSync(conflictPath)) {
+                    await fs.promises.unlink(conflictPath);
+                    console.log(`[ShaderConversion] Removed conflicting shader: ${fpath.relative(targetShadersPath, conflictPath)}`);
+                    // 也删除 meta 文件
+                    const metaPath = conflictPath + ".meta";
+                    if (fs.existsSync(metaPath)) {
+                        await fs.promises.unlink(metaPath);
+                    }
+                }
+            }
         }
     }
 
     private async convertEffect(sourcePath: string, targetPath: string, meta: any) {
         const effectContent = await fs.promises.readFile(sourcePath, "utf8");
         const shaderName = fpath.basename(sourcePath, ".effect");
+
+        // 跳过有预置 shader 替代的 Cocos 内置 effect
+        // 这些 effect 的 shader 已经在插件的 shaders/ 目录中预置了，不需要自动转换
+        const skippedBuiltinEffects: Record<string, string> = {
+            "builtin-toon": "toon_default",      // 使用预置的 toon_default.shader
+            "toon": "toon_default",              // legacy/toon.effect 同样使用预置的 toon_default.shader
+            "builtin-standard": "",               // 使用 LayaAir 内置 PBR shader，不需要生成
+            "builtin-unlit": "",                  // 使用 LayaAir 内置 unlit shader，不需要转换
+        };
+        if (skippedBuiltinEffects[shaderName] !== undefined) {
+            console.log(`[ShaderConversion] Skipping builtin effect "${shaderName}" - using predefined shader replacement`);
+            return;
+        }
 
         // 提取 CCEffect 块（使用字符串方法，不用正则）
         const effectBody = extractEffectBody(effectContent);
@@ -120,17 +269,13 @@ export class ShaderConversion implements ICocosAssetConversion {
             return variableToUniformMap;
         };
 
-        // 获取插件目录下的 shaders 路径（用于检查预置 shader 是否存在）
-        // 使用相对路径定位：当前文件位于 core/assets/ShaderConversion.ts，shaders 目录在插件根目录下
-        // 即：../../shaders（相对于当前文件）
-        const pluginRootPath = fpath.resolve(__dirname, "..", "..");
-        const pluginShadersPath = fpath.join(pluginRootPath, "shaders");
-        const pluginDirName = fpath.basename(pluginRootPath);
+        // 自动查找插件 shaders 目录（不依赖固定路径）
+        const pluginShadersPath = this.findPluginShadersPath();
+        const pluginDirName = "CocosMigrationPlugin";
 
         // 检查 shader 是否已存在的辅助函数（在插件目录下的 shaders 目录中检查）
         const checkShaderExists = (shaderFileName: string): boolean => {
-            // 如果插件 shaders 目录不存在，返回 false
-            if (!fs.existsSync(pluginShadersPath)) {
+            if (!pluginShadersPath) {
                 return false;
             }
             const pluginShaderPath = fpath.join(pluginShadersPath, shaderFileName);
@@ -332,7 +477,15 @@ function parseTechniquesFromYAML(yamlData: any): Technique[] {
         for (const passData of passesArray) {
             if (!passData || typeof passData !== "object") continue;
 
+            // 跳过 Cocos 特有的 shadow/deferred pass，LayaAir 有自己的阴影系统
+            const phase = typeof passData.phase === "string" ? passData.phase.toLowerCase() : "";
+            if (phase === "shadow-caster" || phase === "planar-shadow" || phase === "deferred-forward") {
+                console.debug(`[ShaderConversion] Skipping ${phase} pass - LayaAir handles this internally`);
+                continue;
+            }
+
             const pass: ShaderPass = {};
+            pass.phase = phase;
 
             // 解析 vert 和 frag
             if (typeof passData.vert === "string") {

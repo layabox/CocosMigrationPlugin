@@ -245,6 +245,36 @@ export function extractAmbientInfo(sceneData: any, elements: any[]): any {
 }
 
 /**
+ * 从场景数据中提取 ShadowsInfo
+ */
+export function extractShadowsInfo(sceneData: any, elements: any[]): any {
+    if (!sceneData || !elements)
+        return null;
+
+    // 获取 _globals 引用
+    const globalsId = sceneData._globals?.__id__;
+    if (globalsId === undefined)
+        return null;
+
+    // 查找 SceneGlobals 对象
+    const globals = elements[globalsId];
+    if (!globals || globals.__type__ !== "cc.SceneGlobals")
+        return null;
+
+    // 获取 _shadows 引用
+    const shadowsId = globals._shadows?.__id__ ?? globals.shadows?.__id__;
+    if (shadowsId === undefined)
+        return null;
+
+    // 查找 ShadowsInfo 对象
+    const shadowsInfo = elements[shadowsId];
+    if (!shadowsInfo || shadowsInfo.__type__ !== "cc.ShadowsInfo")
+        return null;
+
+    return shadowsInfo;
+}
+
+/**
  * 从场景数据中提取 FogInfo
  */
 export function extractFogInfo(sceneData: any, elements: any[]): any {
@@ -454,10 +484,10 @@ export function convertAmbientToLaya(
     // 这里默认使用 SolidColor (0)
     scene3DNode.ambientMode = 0;
 
-    // ambientColor: 从 _skyColor 获取（对应 Cocos 的 "Sky Lighting Color"）
-    // 优先使用标准版本 _skyColor，如果没有则使用 HDR 版本，最后才使用 LDR 版本
-    // LDR 版本是色调映射后的值，可能不准确
-    const skyColor = ambientInfo._skyColor ?? ambientInfo._skyColorHDR ?? ambientInfo._skyColorLDR;
+    // ambientColor: 优先使用 HDR 版本
+    // toon shader 不使用场景环境光（有自己的光照模型），
+    // 场景 ambient 只影响 PBR 材质，而 Cocos PBR 用的是 HDR 值
+    const skyColor = ambientInfo._skyColorHDR ?? ambientInfo._skyColor ?? ambientInfo._skyColorLDR;
     if (skyColor) {
         // Cocos 的 Vec4 格式是 {x, y, z, w}，需要转换为 {r, g, b, a}
         // 注意：对于 ambientColor，alpha 应该固定为 1，不从 Vec4 的 w 分量获取
@@ -489,18 +519,16 @@ export function convertAmbientToLaya(
         };
     }
 
-    // ambientIntensity: 从 _skyIllum 或 _skyIllumLDR 获取
-    // 注意：Cocos 的 _skyIllum 是亮度值，可能需要归一化
-    const skyIllum = ambientInfo._skyIllumLDR ?? ambientInfo._skyIllum ?? ambientInfo._skyIllumHDR;
-    if (skyIllum !== undefined && typeof skyIllum === "number") {
-        // Cocos 的亮度值可能很大（如 2400），需要归一化
-        // 通常 Laya 的 ambientIntensity 范围是 0-1 或接近 1
-        // 这里简单处理：如果值很大，除以一个系数；否则直接使用
-        if (skyIllum > 10) {
-            scene3DNode.ambientIntensity = skyIllum / 2400; // 归一化到 0-1 范围
-        } else {
-            scene3DNode.ambientIntensity = Math.max(0, Math.min(1, skyIllum));
-        }
+    // ambientIntensity: 优先使用 HDR illuminance
+    // Cocos PBR 管线中 _skyIllumHDR 是 lux 值（如 20000），
+    // 经相机曝光处理后等效强度 ≈ skyIllum / 默认曝光(20000) ≈ 1.0
+    const skyIllumHDR = ambientInfo._skyIllumHDR ?? ambientInfo._skyIllum;
+    const skyIllumLDR = ambientInfo._skyIllumLDR;
+    if (skyIllumHDR !== undefined && typeof skyIllumHDR === "number" && skyIllumHDR > 10) {
+        // HDR lux 值归一化：除以默认户外曝光值
+        scene3DNode.ambientIntensity = Math.min(skyIllumHDR / 20000, 2.0);
+    } else if (skyIllumLDR !== undefined && typeof skyIllumLDR === "number") {
+        scene3DNode.ambientIntensity = Math.max(0, Math.min(2, skyIllumLDR));
     }
 }
 

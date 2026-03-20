@@ -35,16 +35,16 @@ Shader3D Start
     shaderPass:[
         {
             pipeline:Forward,
-            VS:StandardVS,
-            FS:StandardFS
+            VS:StdOpaqueVS,
+            FS:StdOpaqueFS
         }
     ]
 }
 Shader3D End
 
 GLSL Start
-#defineGLSL StandardVS
-    #define SHADER_NAME StandardVS
+#defineGLSL StdOpaqueVS
+    #define SHADER_NAME StdOpaqueVS
 
     #include "Math.glsl";
     #include "Scene.glsl";
@@ -71,8 +71,8 @@ GLSL Start
     }
 #endGLSL
 
-#defineGLSL StandardFS
-    #define SHADER_NAME StandardFS
+#defineGLSL StdOpaqueFS
+    #define SHADER_NAME StdOpaqueFS
 
     #include "Color.glsl";
     #include "Scene.glsl";
@@ -84,7 +84,8 @@ GLSL Start
     void initSurfaceInputs(inout SurfaceInputs inputs, inout PixelParams pixel)
     {
         #ifdef UV
-            vec2 uv = transformUV(pixel.uv0, tilingOffset);
+            // Use Cocos-style UV transform (no V-flip like LayaAir's transformUV)
+            vec2 uv = pixel.uv0 * tilingOffset.xy + tilingOffset.zw;
         #else
             vec2 uv = vec2(0.0);
         #endif
@@ -104,14 +105,12 @@ GLSL Start
 
         #ifdef ALBEDOTEXTURE
             vec4 albedoSampler = texture2D(mainTexture, uv);
-            #ifdef Gamma_mainTexture
-                albedoSampler = gammaToLinear(albedoSampler);
-            #endif
+            // Always convert sRGB to linear for Cocos-migrated textures
+            albedoSampler = gammaToLinear(albedoSampler);
             inputs.diffuseColor *= albedoSampler.rgb;
             inputs.alpha *= albedoSampler.a;
         #endif
 
-        // Cocos albedoScale
         inputs.diffuseColor *= albedoScale;
 
         // Normal
@@ -123,30 +122,22 @@ GLSL Start
             inputs.normalTS = normalScale(normalSampler, normalStrength);
         #endif
 
-        // PBR params - Cocos style
-        // Cocos: roughness is roughness, Laya: smoothness = 1 - roughness
-        // But in this shader, we follow Cocos convention where roughness uniform IS roughness
         inputs.metallic = metallic;
-        inputs.smoothness = 1.0 - roughness; // Convert Cocos roughness to Laya smoothness
+        inputs.smoothness = 1.0 - roughness;
+        inputs.occlusion = 1.0;
 
         #ifdef METALLICGLOSSTEXTURE
             vec4 pbrSampler = texture2D(pbrMap, uv);
-            // Cocos pbrMap channels: r: occlusion, g: roughness, b: metallic, a: specularIntensity
-            inputs.metallic = pbrSampler.b * metallic;
+            // Cocos channel mapping: .r=occlusion, .g=roughness, .b=metallic, .a=specularIntensity
+            inputs.occlusion = mix(1.0, pbrSampler.r, occlusion);
             inputs.smoothness = 1.0 - (pbrSampler.g * roughness);
-        #endif
-
-        // Occlusion
-        inputs.occlusion = 1.0;
-        #ifdef OCCLUSIONTEXTURE
-            vec4 occlusionSampler = texture2D(occlusionMap, uv);
-            // Cocos uses .r channel for occlusion in occlusionMap, .g in pbrMap
-            inputs.occlusion = mix(1.0, occlusionSampler.r, occlusion);
-        #endif
-        #ifdef METALLICGLOSSTEXTURE
-            // If using pbrMap, occlusion is in .r channel
-            vec4 pbrOcc = texture2D(pbrMap, uv);
-            inputs.occlusion = mix(1.0, pbrOcc.r, occlusion);
+            inputs.metallic = pbrSampler.b * metallic;
+        #else
+            #ifdef OCCLUSIONTEXTURE
+                vec4 occlusionSampler = texture2D(occlusionMap, uv);
+                float occTex = occlusionSampler.g;
+                inputs.occlusion = (1.0 - occlusion) + occTex * occlusion;
+            #endif
         #endif
 
         // Emission
@@ -155,9 +146,8 @@ GLSL Start
             inputs.emissionColor = emissive.rgb * emissiveScale;
             #ifdef EMISSIONTEXTURE
                 vec4 emissionSampler = texture2D(emissiveMap, uv);
-                #ifdef Gamma_emissiveMap
-                    emissionSampler = gammaToLinear(emissionSampler);
-                #endif
+                // Always convert sRGB to linear for Cocos-migrated textures
+                emissionSampler = gammaToLinear(emissionSampler);
                 inputs.emissionColor *= emissionSampler.rgb;
             #endif
         #endif
@@ -172,13 +162,6 @@ GLSL Start
         initSurfaceInputs(inputs, pixel);
 
         vec4 surfaceColor = PBR_Metallic_Flow(inputs, pixel);
-        
-        // 亮度校正：Laya PBR 整体偏亮，适当降低以匹配 Cocos
-        surfaceColor.rgb *= 0.85;
-        
-        // 对比度增强：提高对比度使画面更有层次感
-        float contrast = 1.3; // 对比度系数，大于1增加对比度
-        surfaceColor.rgb = (surfaceColor.rgb - 0.5) * contrast + 0.5;
         
         #ifdef FOG
             surfaceColor.rgb = sceneLitFog(surfaceColor.rgb);

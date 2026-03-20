@@ -6,6 +6,7 @@ import { MaterialConversion } from "./assets/MaterialConversion";
 import { AnimGraphConversion } from "./assets/AnimGraphConversion";
 import { ShaderConversion } from "./assets/ShaderConversion";
 import { AnimationClipConversion } from "./assets/AnimationClipConversion";
+import { AudioConversion } from "./assets/AudioConversion";
 
 
 /**
@@ -51,7 +52,13 @@ export var ConversionRegistry: Array<{ exts: Array<string>, type: new (owner: IC
         type: AnimationClipConversion
     },
 
-    // 6. 预制体和场景 - 最后处理（依赖上面所有资源）
+    // 6. 音频资源（直接复制）
+    {
+        exts: ["mp3", "wav", "ogg", "m4a", "aac"],
+        type: AudioConversion
+    },
+
+    // 7. 预制体和场景 - 最后处理（依赖上面所有资源）
     {
         exts: ["prefab", "scene"],
         type: PrefabConversion

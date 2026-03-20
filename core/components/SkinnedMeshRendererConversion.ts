@@ -62,11 +62,17 @@ function executeSkinnedMeshRendererConversion(conversion: any, owner: any, node:
         }).filter(Boolean);
     }
 
+    // Cocos 默认值是 0（不投射阴影），未显式设置时应默认关闭
     if (typeof data._shadowCastingMode === "number")
         renderer.castShadow = data._shadowCastingMode !== 0;
+    else
+        renderer.castShadow = false;
 
+    // Cocos 默认值是 1（接收阴影），未显式设置时应默认开启
     if (typeof data._shadowReceivingMode === "number")
         renderer.receiveShadow = data._shadowReceivingMode !== 0;
+    else
+        renderer.receiveShadow = true;
 
     const rootBoneNode = resolveNode(conversion, data._skinningRoot);
     if (rootBoneNode)
@@ -106,26 +112,32 @@ function executeSkinnedMeshRendererConversion(conversion: any, owner: any, node:
             renderer._bones = bones;
     }
 
-    // 对于有 MeshFilter 的节点，scale 也需要除以 100
-    // if (meshUuid) {
-    //     if (!node.transform) {
-    //         node.transform = {};
-    //     }
-    //     if (node.transform.localScale) {
-    //         const scale = node.transform.localScale;
-    //         if (typeof scale.x === "number") scale.x /= 100;
-    //         if (typeof scale.y === "number") scale.y /= 100;
-    //         if (typeof scale.z === "number") scale.z /= 100;
-    //     } else {
-    //         // 如果没有 localScale，默认值是 1，设置为 1/100 = 0.01
-    //         node.transform.localScale = {
-    //             "_$type": "Vector3",
-    //             x: 0.01,
-    //             y: 0.01,
-    //             z: 0.01
-    //         };
-    //     }
-    // }
+    // 修复 FBX 模型节点的缩放差异（与 PrefabConversion 中的修正一致）
+    if (meshUuid) {
+        const resolvedMeshUuid = formatUuid(meshUuid, owner);
+        const fbxUuid = resolvedMeshUuid?.split("@")[0];
+        const fbxAsset = fbxUuid ? owner.allAssets.get(fbxUuid) : null;
+        const unitScaleFactor = fbxAsset?.userData?.unitScaleFactor ?? 1;
+
+        if (unitScaleFactor !== 1) {
+            if (!node.transform) {
+                node.transform = {};
+            }
+            if (node.transform.localScale) {
+                const scale = node.transform.localScale;
+                if (typeof scale.x === "number") scale.x *= unitScaleFactor;
+                if (typeof scale.y === "number") scale.y *= unitScaleFactor;
+                if (typeof scale.z === "number") scale.z *= unitScaleFactor;
+            } else {
+                node.transform.localScale = {
+                    "_$type": "Vector3",
+                    x: unitScaleFactor,
+                    y: unitScaleFactor,
+                    z: unitScaleFactor
+                };
+            }
+        }
+    }
 
     // 处理骨骼节点的 transform
     // 1. rootBone 下面的子节点（但不包含 rootBone 节点本身）的 scale 都要除以 100

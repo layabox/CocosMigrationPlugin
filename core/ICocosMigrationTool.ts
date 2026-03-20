@@ -27,6 +27,24 @@ export interface ICocosMigrationTool {
     }>;
 
     /**
+     * 待处理的 FBX 材质重映射列表
+     */
+    _pendingMaterialRemaps?: Array<{
+        fbxMetaPath: string;
+        embeddedMaterials: Map<string, string>;
+        targetDir: string;
+    }>;
+
+    /**
+     * 待处理的 2D 动画控制器文件列表（.mcc）
+     */
+    _pendingAnimation2DControllers?: Array<{
+        path: string;
+        data: any;
+        uuid: string;
+    }>;
+
+    /**
      * 执行迁移
      * @param tasks 任务列表
      * - sourceFolder 源文件夹路径

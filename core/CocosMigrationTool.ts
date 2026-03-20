@@ -4,6 +4,7 @@ import { ICocosAssetConversion, ICocosMigrationTool as ICocosMigrationTool } fro
 import { ConversionRegistry } from "./Registry";
 import { Utils } from "../../cankao/engineSource/src/layaAir/laya/utils/Utils";
 import { internalUUIDMap } from "./Utils";
+import { logger } from "./Logger";
 
 const ConversionPiority = Symbol("ConversionPriority");
 
@@ -38,6 +39,10 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         cocosProjectConfig?: any,
         copyUnknownAssets?: boolean
     }) {
+        // 开始日志会话
+        logger.startSession();
+        logger.info("CocosMigrationTool", "开始转换任务");
+        
         this.allAssets = new Map();
         this._items = [];
         this._registry = new Map();
@@ -87,17 +92,6 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         this.projectConfig = projectConfig;
 
         let internalAssetsFolder = options.cocosInternalAssetsFolder;
-        
-        // 检测 internalAssetsFolder 是否存在
-        if (internalAssetsFolder) {
-            if (!fs.existsSync(internalAssetsFolder)) {
-                throw new Error(
-                    `内部资源文件夹不存在: ${internalAssetsFolder}\n` +
-                    `请先用 Cocos Creator IDE 打开项目，然后再进行转换。\n` +
-                    `Cocos Creator IDE 会在首次打开项目时更新内部资源文件夹路径。`
-                );
-            }
-        }
         if (!internalAssetsFolder && cocosProjectRoot) {
             let tsconfig = await IEditorEnv.utils.readJsonAsync(fpath.join(cocosProjectRoot, "temp", "tsconfig.cocos.json"));
             if (tsconfig) {
@@ -161,6 +155,9 @@ export class CocosMigrationTool implements ICocosMigrationTool {
         }
 
         EditorEnv.scene.validateScene();
+
+        // 结束日志会话
+        logger.endSession();
     }
 
     getAssetConversion(ext: string): ICocosAssetConversion | null {
